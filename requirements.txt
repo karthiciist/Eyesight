@@ -1,0 +1,11 @@
+matplotlib
+dill===0.2.8
+numpy===1.15.4
+joblib===0.13.0
+flask
+flask-restful
+pandas===0.23.4
+scikit-learn===0.20.2
+Flask-Cors
+requests
+pillow===2.2.2

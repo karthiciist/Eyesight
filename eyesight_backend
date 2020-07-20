@@ -1,0 +1,1957 @@
+from flask import Flask, request, jsonify, make_response
+from flask_cors import CORS
+import pytesseract
+from tesserocr import PyTessBaseAPI
+import cv2
+import numpy as np
+from PIL import Image, ImageChops
+import io
+import tesserocr
+import base64
+import re
+from imageio import imread
+import pyodbc
+import json
+from imutils.object_detection import non_max_suppression
+from difflib import SequenceMatcher
+import time
+import os
+
+app = Flask(__name__)
+
+CORS(app)
+
+api = PyTessBaseAPI(path='C:/Users/ET437GL/Documents/tesseract/tesserocr-master/tesserocr-master/tessdata-master',
+                    lang='tam')
+imagepath = 'C:/Users/ET437GL/Documents/tesseract/noise'
+imagefile = 'C:/Users/ET437GL/Documents/tesseract/noise/testimage.jpg'
+local_save_input_file = 'reconstructed.jpg'
+
+# timestamp = time.time()
+# timestamp = str(timestamp).split('.')
+# timestamp = str(timestamp[0])
+# print(timestamp)
+#
+global local_save_input_test_file
+local_save_cropped_file = 'croppedpic.jpg'
+
+headerfound = 0
+leftindexfound = 0
+
+
+@app.route('/status', methods=['GET'])
+def healthz():
+    return sendresponse("EYESIGHT running...", 200)
+
+
+@app.route('/extracttext', methods=['POST'])
+def extracttext():
+    try:
+        data = request.get_json()
+        if data is None:
+            print("No valid request body, json missing!")
+            return jsonify({'error': 'No valid request body, json missing!'})
+        else:
+            img_data = data['thumbnail']
+            corrstring = img_data + "=="
+            corrstring1 = re.sub(r'.*,', ',', corrstring)
+            corrstring2 = corrstring1.replace(",", "")
+
+            stringToRGB(corrstring2, local_save_input_file)
+
+        image1 = Image.open(local_save_input_file)
+        resultstring = tesserocr.image_to_text(image1, lang="eng")  # print ocr text from image
+        resultstring = resultstring.strip()
+        print(resultstring)
+        return sendresponse(resultstring, 200)
+    except Exception as e:
+        resultstring = 'failed to get text!!!' + str(e)
+        print(resultstring)
+        return sendresponse(resultstring, 201)
+
+
+@app.route('/createmodel', methods = ['POST'])
+def createmodel():
+    modelname = request.form['modelname']
+    if modelname == "":
+        return sendresponse("Model name missing", 201)
+    else:
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        query = "CREATE TABLE " + modelname + "(sno int identity primary key, xaxis float, yaxis float, width float, " \
+                                              "height float, rotate float, keywidth varchar(255), keyheight varchar(255), " \
+                                              "fullwidth float, fullheight float, label varchar(255), text varchar(" \
+                                              "255), header varchar(255), hposition varchar(255), htol varchar(255), " \
+                                              "footer varchar(255), fposition varchar(255), ftol varchar(255), " \
+                                              "isthre varchar(255), colorcut varchar(255), threshold varchar(255), textnature " \
+                                              "varchar(255), language varchar(255), iskey varchar(255), " \
+                                              "kposition varchar(255), ktol varchar(255), keyval varchar(255), " \
+                                              "leftindex varchar(255), liposition varchar(255), litol varchar(255), kori varchar(255), koriper varchar(255)); "
+        print (query)
+        cursor.execute(query)
+        conn.commit()
+        return sendresponse("Model created", 200)
+
+
+@app.route('/trainmodel', methods = ['POST'])
+def trainmodel():
+    if request.is_json:
+        try:
+            # print (request.headers["modelname"])
+            modelname = request.headers["modelname"]
+            # fullheight = request.headers["fullheight"]
+            # fullwidth = request.headers["fullwidth"]
+            # noofparam = request.headers["noofparam"]
+            # header = request.headers["header"]
+            # footer = request.headers["footer"]
+            # leftindex = request.headers["leftindex"]
+            # defthre = request.headers["defthre"]
+            # defcolcut = request.headers["defcolcut"]
+            # defeyerangex = request.headers["defeyerangex"]
+            # defeyerangey = request.headers["defeyerangey"]
+            # ocrtype = request.headers["ocrtype"]
+
+            conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                                  'Server=IN2371790W1\SQLEXPRESS;'
+                                  'Database=eyesight;'
+                                  'Trusted_Connection=yes;')
+            cursor = conn.cursor()
+            # modelquery = 'INSERT INTO eyesight.dbo.' + 'models' + '(model, ocr, fullheight, fullwidth, noofparam, header, footer, ' \
+            #                                                       'leftindex, defthre, defcolcut, defeyerangex, defeyerangey) VALUES (' + ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + ');'
+
+            # print(modelquery)
+            # cursor.execute(modelquery)
+
+            content = request.get_json()
+            jtopy = json.dumps(content)
+            json_dictionary = json.loads(jtopy)
+            for key in json_dictionary:
+                indi = json_dictionary[key]
+                xaxisl = indi["xaxis"]
+                yaxisl = indi["yaxis"]
+                widthl = indi["width"]
+                heightl = indi["height"]
+                rotatel = indi["rotate"]
+                keywidth = indi["keywidth"]
+                keyheight = indi["keyheight"]
+                fullwidthl = indi["fullwidth"]
+                fullheightl = indi["fullheight"]
+                labell = indi["lable"]
+                textl = indi["text"]
+                headerl = indi["header"]
+                hpositionl = indi["hposition"]
+                htoll = indi["htol"]
+                footerl = indi["footer"]
+                fpositionl = indi["fposition"]
+                ftoll = indi["ftol"]
+                isthre = indi["isthre"]
+                colorcut = indi["colorcut"]
+                threshold = indi["threshold"]
+                textnature = indi["textnature"]
+                language = indi["language"]
+                iskey = indi["iskey"]
+                kposition = indi["kposition"]
+                ktol = indi["ktol"]
+                keyval = indi["keyval"]
+                leftindex = indi["leftindex"]
+                liposition = indi["liposition"]
+                litol = indi["litol"]
+                kori = indi["kori"]
+                koriper = indi["koriper"]
+
+                if "'" in keyval:
+                    keyval = keyval.replace("'", "")
+
+                cursor = conn.cursor()
+                # query = 'INSERT INTO eyesight.dbo.' + modelname + '(xaxis, yaxis, width, height, rotate, scalex,
+                # scaley, ' \ 'fullwidth, fullheight, label, text, header, hposition,' \ 'htol, footer, fposition, ftol,
+                # isthre, colorcut, ' \ 'threshold, textnature, language, iskey, kposition, ' \ 'ktol) VALUES (' + xaxisl
+                # + \ ',' + yaxisl + ',' + widthl + ',' + heightl + ',' + rotatel + ',' + scalexl + ',' + scaleyl + ',
+                # ' + fullwidthl + ',' + fullheightl + ', \'' + labell + '\' , \'' + textl + '\'' + ',\'' + headerl +
+                # '\',\'' + hpositionl + '\',\'' + htoll + '\',\'' + footerl + '\',\'' + fpositionl + '\',\'' + ftoll +
+                # '\'' + '); '
+
+                # query = 'INSERT INTO eyesight.dbo.' + modelname + '(xaxis, yaxis, width, height, rotate, scalex, scaley, ' \
+                #                                                   'fullwidth, fullheight, label, text, header, hposition,' \
+                #                                                   'htol, footer, fposition, ftol, isthre, colorcut, ' \
+                #                                                   'threshold, textnature, language, iskey, kposition, ' \
+                #                                                   'ktol, keyval) VALUES (' + xaxisl + ',' + yaxisl + ',' + widthl + ',' + heightl + ',' + rotatel + ',' + scalexl + ',' + scaleyl + ',' + fullwidthl + ',' + fullheightl + ', \'' + labell + '\' , \'' + textl + '\'' + ',\'' + headerl + '\',\'' + hpositionl + '\',\'' + htoll + '\',\'' + footerl + '\',\'' + fpositionl + '\',\'' + ftoll + '\',\'' + isthre + '\',\'' + colorcut + '\',\'' + threshold + '\',\'' + textnature + '\',\'' + language + '\',\'' + iskey + '\',\'' + kposition + '\',\'' + ktol + '\',\'' + keyval + '\'' +');'
+
+                query = 'INSERT INTO eyesight.dbo.' + modelname + '(xaxis, yaxis, width, height, rotate, keywidth, keyheight, ' \
+                                                                  'fullwidth, fullheight, label, text, header, hposition,' \
+                                                                  'htol, footer, fposition, ftol, isthre, colorcut, ' \
+                                                                  'threshold, textnature, language, iskey, kposition, ' \
+                                                                  'ktol, keyval, leftindex, liposition, litol, kori, koriper) VALUES (' + xaxisl + ',' + yaxisl + ',' + widthl + ',' + heightl + ',' + rotatel + ', \'' + keywidth + ' \', \'' + keyheight + ' \', ' + fullwidthl + ',' + fullheightl + ', \'' + labell + '\' , \'' + textl + '\'' + ',\'' + headerl + '\',\'' + hpositionl + '\',\'' + htoll + '\',\'' + footerl + '\',\'' + fpositionl + '\',\'' + ftoll + '\',\'' + isthre + '\',\'' + colorcut + '\',\'' + threshold + '\',\'' + textnature + '\',\'' + language + '\',\'' + iskey + '\',\'' + kposition + '\',\'' + ktol + '\',\'' + keyval + '\',\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',\'' + koriper + '\'' + ');'
+
+                print(query)
+                cursor.execute(query)
+                conn.commit()
+            return sendresponse("Model trained", 200)
+        except Exception as e:
+            return sendresponse("Failed to train model : " + e, 200)
+
+    else:
+        return sendresponse("Failed to train model", 201)
+
+
+@app.route('/updatemodelstable', methods = ['POST'])
+def updatemodelstable():
+    if request.is_json:
+        modelname = request.headers["modelname"]
+        ocrtype = request.headers["ocrtype"]
+        fullheight = request.headers["fullheight"]
+        fullwidth = request.headers["fullwidth"]
+        noofparam = request.headers["noofparam"]
+        header = request.headers["header"]
+        footer = request.headers["footer"]
+        leftindex = request.headers["leftindex"]
+        defthre = request.headers["defthre"]
+        defcolcut = request.headers["defcolcut"]
+        defeyerangex = request.headers["defeyerangex"]
+        defeyerangey = request.headers["defeyerangey"]
+
+        apiexposed = request.headers["apiexposed"]
+        apikey = request.headers["apikey"]
+        apiurl = request.headers["apiurl"]
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        modelquery = 'INSERT INTO eyesight.dbo.' + 'models' + '(model, ocr, fullheight, fullwidth, noofparam, header, footer, ' \
+                                                              'leftindex, defthre, defcolcut, defeyerangex, ' \
+                                                              'defeyerangey, apiexposed, apikey, apiurl) VALUES (' + \
+                     ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\'' + '); '
+
+        print(modelquery)
+        cursor.execute(modelquery)
+        conn.commit()
+        return sendresponse("Models table populated", 200)
+
+    else:
+        return sendresponse("Failed to train model", 201)
+
+@app.route('/fetchmodels', methods = ['POST'])
+def fetchmodels():
+    querystring = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_CATALOG='eyesight'"
+    models = []
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    cursor.execute(querystring)
+    rows = cursor.fetchall()
+    print('Total Row(s):', cursor.rowcount)
+    for row in rows:
+        string = str(row)
+        string = string.replace("(", "")
+        string = string.replace(")", "")
+        string = string.replace(" ", "")
+        string = string.replace(",", "")
+        string = string.replace("'", "")
+        models.append(string)
+        print(string)
+    modelsjson = json.dumps(models)
+    return modelsjson
+
+
+@app.route('/gettitles', methods = ['POST'])
+def gettitles():
+    modelname = request.form['model']
+    models = []
+    querystring = "select label from eyesight.dbo." + modelname + " where label != '-';"
+
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    cursor.execute(querystring)
+    rows = cursor.fetchall()
+    for row in rows:
+        string = str(row[0])
+        models.append(string)
+
+    return str(models)
+
+
+@app.route('/receiveimage', methods = ['POST'])
+def receiveimage():
+    try:
+        modelname = request.form['model']
+        print("model being consumed - " + modelname)
+        file = request.files['file']
+        if 'file' not in request.files:
+            print('No file part')
+            return sendresponse("file not received", 201)
+        else:
+            timestamp = time.time()
+            timestamp = str(timestamp).split('.')
+            timestamp = str(timestamp[0])
+            print(timestamp)
+
+            local_save_input_test_file = 'testimage' + timestamp + '.jpg'
+
+            finaltext = []
+            file = request.files['file']
+            file.save(local_save_input_test_file)
+            print("file received")
+
+
+            # 1st step - fetch model information from db
+            modelsmetadata = fetchmodelinfo(modelname)
+
+
+            # get dimensions, threshold, colorcut values of training image from modelmetadata
+            modeldetails = fetchmodeldetails(modelname)
+            print (modeldetails)
+            originalimagesize = modelsmetadata[0]
+            originalimagesizewidth = originalimagesize[8]
+            originalimagesizeheight = originalimagesize[9]
+
+            originalthreshold = modeldetails[8]
+            originalcolorcut = modeldetails[9]
+            originaleyerangex = int (modeldetails[10])
+            originaleyerangey = int (modeldetails[11])
+
+
+            # fixing threshold and colorcut
+            try:
+                inputimage = cv2.imread(local_save_input_test_file)
+                inputimage = Image.fromarray(inputimage)
+                processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+                processedimage.save(local_save_input_test_file)
+            except Exception as e:
+                print(e)
+
+
+            # 2nd step - resize incoming image to match train image dimension
+            resizedimage = resizeimage(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+            resizedimage = Image.fromarray(resizedimage)
+            try:
+                resizedimage = resizedimage.convert("RGB")
+                resizedimage.save(local_save_input_test_file)
+            except Exception as e:
+                if "RGBA" in str(e):
+                    resizedimage = resizedimage.convert("RGB")
+                    resizedimage.save(local_save_input_test_file)
+                else:
+                    print(e)
+
+
+            # 3rd step - crop area of image before header, after footer and to the left of left index
+            cleanedimage = crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut)
+            print (cleanedimage)
+
+
+            # 3rd step - draw bounding boxes and get metadata of all boxes
+            textboxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+            print("--------------")
+            print (textboxes)
+            print("--------------")
+
+
+            # 4th step - loop through every row in modelsmetadata to zero down at required bounding box in textboxes
+
+
+            for parameter in modelsmetadata:
+                print(str(parameter))
+                label = parameter[10]
+                if label != "-":
+
+                    # false = "true"
+                    # if false == "false":
+                    if parameter[23] == 'true':
+                        foundtxtfromkey = keybased(parameter, local_save_input_test_file)
+                        if (foundtxtfromkey == ""):
+                            foundtxtfromkey == " "
+                        finaltext.append(foundtxtfromkey)
+                    else :
+                        xaxis = int(parameter[1]) + leftindexfound
+                        yaxis = int(parameter[2]) + headerfound
+                        width = int(parameter[3])
+                        height = int(parameter[4])
+                        label = parameter[10]
+                        threshold = parameter[20]
+                        colorcut = parameter[19]
+                        xalignedboxes = findxalignedboxes(xaxis, textboxes, originaleyerangex)
+                        zeroeddownboxes = findyalignedboxes(yaxis, xalignedboxes, originaleyerangey)
+
+                        # 5th step - if zeroed down boxes are more than one, find the one closest to training data from db
+                        noofzeroeddownboxes = len(zeroeddownboxes)
+                        if (noofzeroeddownboxes > 1):
+                            correctedbox = getcorrectzeroddownbox(zeroeddownboxes, yaxis)
+                        elif (noofzeroeddownboxes == 0):
+                            print("cannot find parameter " + label)
+                            # return sendresponse("cannot find parameter " + label, 201)
+                            continue
+                        else:
+                            correctedbox = zeroeddownboxes[0]
+
+                        # 6th step - crop the correctedbox from the received test image
+                        left = correctedbox[0]
+                        top = correctedbox[1]
+                        right = width + left
+                        bottom = height + top
+                        # right = correctedbox[2]
+                        # bottom = correctedbox[3]
+                        cropcleanedimage = cv2.imread(local_save_input_test_file)
+                        cropcleanedimage = Image.fromarray(cropcleanedimage)
+                        # cropcleanedimage.show()
+
+                        croppedimage = cropimage(cropcleanedimage, left, top, right, bottom)
+                        # croppedimage.show()
+
+                        # 7th step - send the cropped text to adjust thresholding and color cut
+                        enhancedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, croppedimage)
+
+                        # 8th step - send the cropped image to tesseract engine to get text
+                        textfound = invoketesseract(enhancedimage)
+                        textfound = textfound.replace("\'", "")
+                        textfound = textfound.replace("(", "")
+                        textfound = textfound.replace(")", "")
+                        textfound = textfound.replace("\"", "")
+                        print(textfound)
+
+                        if textfound == "":
+                            opencvImage = cv2.cvtColor(np.array(croppedimage), cv2.COLOR_RGB2BGR)
+                            gray = cv2.cvtColor(opencvImage, cv2.COLOR_BGR2GRAY)
+                            # cv2.imshow('Enhanced image', gray)
+                            # cv2.waitKey(0)
+                            # cv2.destroyAllWindows()
+                            im_pil = Image.fromarray(gray)
+                            textfound = invoketesseract(im_pil)
+                            textfound = textfound.replace("\'", "")
+                            textfound = textfound.replace("(", "")
+                            textfound = textfound.replace(")", "")
+                            textfound = textfound.replace("\"", "")
+                            print(textfound)
+                            if (textfound == ""):
+                                textfound == " "
+                            finaltext.append(textfound)
+                        else:
+                            if (textfound == ""):
+                                textfound == " "
+                            finaltext.append(textfound)
+
+            return sendresponse(str(finaltext), 200)
+
+
+    #         response = gettextfromcroppedpic(modelname, textboxes)
+    #         response = str(response)
+    #         print(response)
+    #         titles = gettitles(modelname)
+    #         return sendresponse(response, 200, titles)
+    except Exception as e:
+        resultstring = 'Something wrong - ' + str(e)
+        return sendresponse(resultstring, 201)
+
+
+@app.route('/processcroppedimg', methods = ['POST'])
+def processcroppedimg():
+    try:
+        data = request.get_json()
+        if data is None:
+            print("No valid request body, json missing!")
+            return jsonify({'error': 'No valid request body, json missing!'})
+        else:
+            img_data = data['thumbnail']
+            threshold = int(data['threshold'])
+            colorcut = int(data['colorcut'])
+            corrstring = img_data + "=="
+            corrstring1 = re.sub(r'.*,', ',', corrstring)
+            corrstring2 = corrstring1.replace(",", "")
+
+            stringToRGB(corrstring2, local_save_cropped_file)
+            final = enhancecroppedpic(threshold, colorcut)
+            return final
+
+        # image1 = Image.open(local_save_cropped_file)
+        # image1.show()
+        # resultstring = tesserocr.image_to_text(image1, lang="eng")  # print ocr text from image
+        # resultstring = resultstring.strip()
+        # print(resultstring)
+        # return sendresponse(resultstring, 200)
+    except Exception as e:
+        resultstring = 'failed to get text!!!' + str(e)
+        print(resultstring)
+        return sendresponse(resultstring, 201)
+
+
+@app.route('/updatemodeledtails', methods = ['POST'])
+def updatemodeledtails():
+    if request.is_json:
+        modelname = request.headers["modelname"]
+        apiexposed = request.headers["apiexposed"]
+        defthre = request.headers["defthre"]
+        defcolcut = request.headers["defcolcut"]
+        defeyerangex = request.headers["defeyerangex"]
+        defeyerangey = request.headers["defeyerangey"]
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        # modelquery = 'INSERT INTO eyesight.dbo.' + 'models' + '(model, ocr, fullheight, fullwidth, noofparam, header, footer, ' \
+        #                                                       'leftindex, defthre, defcolcut, defeyerangex, ' \
+        #                                                       'defeyerangey, apiexposed, apikey, apiurl) VALUES (' + \
+        #              ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\'' + '); '
+
+        modelquery = 'UPDATE models SET apiexposed = ' + '\'' + apiexposed + '\'' + ', ' + 'defthre=' + ' \'' + defthre + '\'' + ', ' + 'defcolcut=' + ' \'' + defcolcut + '\'' + ', ' + 'defeyerangex=' + ' \'' + defeyerangex + '\'' + ', ' + 'defeyerangey=' + ' \'' + defeyerangey + '\'' + ' WHERE model = ' + '\'' + modelname + '\';'
+        print(modelquery)
+        cursor.execute(modelquery)
+        conn.commit()
+        return sendresponse("Model updated", 200)
+
+    else:
+        return sendresponse("Failed to update model", 201)
+
+# pass a cropped image to this method to enhance it
+def enhancecroppedpic(threshold, colorcut):
+    # colorcut = 200
+    # threshold = 125
+
+    image = cv2.imread(local_save_cropped_file)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # cv2.imwrite(local_save_cropped_file, gray)
+
+    # img = cv2.imread(local_save_cropped_file)
+    # img = gray
+    gray[(gray > colorcut)] = 255  # change everything to white where pixel is not black
+
+    thresh, enhancedimg = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+
+    cv2.imwrite(local_save_cropped_file, enhancedimg)
+
+    message = {"status": 200, "imagestring": RGBTostring(), "updatedresultstring": getupdatedimgstring()}
+    response = jsonify(message)
+    response.status_code = 200
+    return response
+
+
+# pass cropped pic to enhance it with threshold and colorcut during runtime
+def enhancecroppedpicruntime(threshold, colorcut, croppedpic):
+    opencvImage = cv2.cvtColor(np.array(croppedpic), cv2.COLOR_RGB2BGR)
+    if threshold == "-":
+        threshold = 200
+    else:
+        threshold = int(threshold)
+
+    if colorcut == "-":
+        colorcut = 200
+    else:
+        colorcut = int(colorcut)
+
+    # image = cv2.imread(local_save_cropped_file)
+    gray = cv2.cvtColor(opencvImage, cv2.COLOR_BGR2GRAY)
+    gray[(gray > colorcut)] = 255  # change everything to white where pixel is not black
+    thresh, enhancedimg = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+    # cv2.imwrite(local_save_cropped_file, enhancedimg)
+
+    # message = {"status": 200, "imagestring": RGBTostring(), "updatedresultstring": getupdatedimgstring()}
+    # response = jsonify(message)
+    # response.status_code = 200
+    # cv2.imshow('Enhanced image', enhancedimg)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    im_pil = Image.fromarray(enhancedimg)
+    return im_pil
+
+
+def getupdatedimgstring():
+    try:
+        # croppedimage = imread(local_save_cropped_file)
+        croppedimage = Image.open(local_save_cropped_file)
+        resultstring = tesserocr.image_to_text(croppedimage, lang="eng")  # print ocr text from image
+        resultstring = resultstring.strip()
+        if resultstring == "":
+            resultstring = "Cannot extract text"
+        print(resultstring)
+        return resultstring
+    except Exception as e:
+        print(e)
+        return str(e)
+
+
+# pass a model name to this method to get model meta data in list of lists format
+def fetchmodelinfo(modelname):
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    query = 'select * from eyesight.dbo.' + modelname + ';'
+    cursor.execute(query)
+    modelmetadata = []
+    for row in cursor:
+        modelmetadata.append(row)
+    return modelmetadata
+
+
+# call this method and pass width and height to resize an image
+def resizeimage(local_save_input_test_file, width, height):
+    width = int(width)
+    height = int(height)
+    img = cv2.imread(local_save_input_test_file, cv2.IMREAD_UNCHANGED)
+    print('Original Dimensions : ', img.shape)
+    dim = (width, height)
+
+    try:
+        resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    except Exception as e:
+        print(e)
+        return e
+
+    print('Resized Dimensions : ', resized.shape)
+    return resized
+
+
+# call this method to get boundary boxes aligned to x axis of training image in list of lists format
+def findxalignedboxes(xaxis, textboxes, originaleyerangex):
+    xalignedboxes = []
+    for textbox in textboxes:
+        startx = int(textbox[0])
+        diff = abs(startx - xaxis)
+        if (diff <= originaleyerangex):
+            xalignedboxes.append(textbox)
+    print ("x-aligned boxes - " + str(xalignedboxes))
+    return xalignedboxes
+
+
+# call this method to get boundary boxes aligned to y axis of training image in list of lists format
+def findyalignedboxes(yaxis, xalignedboxes, originaleyerangey):
+    yalignedboxes = []
+    for xalignedbox in xalignedboxes:
+        starty = int(xalignedbox[1])
+        diff = abs(starty - yaxis)
+        if (diff <= originaleyerangey):
+            yalignedboxes.append(xalignedbox)
+    print("y-aligned boxes - " + str(yalignedboxes))
+    return yalignedboxes
+
+
+# call this method to get correct box if more than one zerod down boxes are received
+def getcorrectzeroddownbox(zeroeddownboxes, yaxis):
+    zeroeddownboxyaxislist = []
+    for zeroeddownbox in zeroeddownboxes:
+        i = zeroeddownbox[1]
+        zeroeddownboxyaxislist.append(i)
+    correctbox = min(zeroeddownboxyaxislist, key=lambda x: abs(x - yaxis))
+    correctindex = zeroeddownboxyaxislist.index(correctbox)
+    correctedbox = zeroeddownboxes[correctindex]
+    print (correctedbox)
+    return correctedbox
+
+
+# call this method with correct parameters to crop an image
+def cropimage(image, left, top, right, bottom):
+    cropped = image.crop((left, top, right, bottom))
+    # cropped.show()
+    cropped = cropped.convert('RGB')
+    return cropped
+
+
+# call this method and pass cropped image to invoke tesseract engine and get text found in that image
+def invoketesseract(croppedimage):
+    try:
+        resultstring = tesserocr.image_to_text(croppedimage, lang="eng")  # print ocr text from image
+        resultstring = resultstring.strip()
+        print(resultstring)
+        return resultstring
+    except Exception as e:
+        print(e)
+        return str(e)
+
+
+# call this method to get the list of all bounding boxes around texts in the image in list of lists format
+def gettextboxes(local_save_input_test_file, fullwidth, fullheight):
+    image = cv2.imread(local_save_input_test_file)
+    height, width, channels = image.shape
+
+    if (fullwidth == 0) & (fullheight == 0):
+        fullwidth = width
+        fullheight = height
+
+    orig = image.copy()
+    (H, W) = image.shape[:2]
+
+    (newW, newH) = (640, 640)
+    rW = W / float(newW)
+    rH = H / float(newH)
+
+    image = cv2.resize(image, (newW, newH))
+    (H, W) = image.shape[:2]
+
+    layerNames = [
+        "feature_fusion/Conv_7/Sigmoid",
+        "feature_fusion/concat_3"]
+
+    print("[INFO] loading EAST text detector...")
+
+    net = cv2.dnn.readNet("frozen_east_text_detection.pb")
+    blob = cv2.dnn.blobFromImage(image, 1.0, (W, H),
+                                 (123.68, 116.78, 103.94), swapRB=True, crop=False)
+    net.setInput(blob)
+    (scores, geometry) = net.forward(layerNames)
+
+    (numRows, numCols) = scores.shape[2:4]
+    rects = []
+    confidences = []
+
+    textboxesxxx = []
+
+    for y in range(0, numRows):
+        scoresData = scores[0, 0, y]
+        xData0 = geometry[0, 0, y]
+        xData1 = geometry[0, 1, y]
+        xData2 = geometry[0, 2, y]
+        xData3 = geometry[0, 3, y]
+        anglesData = geometry[0, 4, y]
+
+        for x in range(0, numCols):
+            if scoresData[x] < 0.05:
+                continue
+
+            (offsetX, offsetY) = (x * 4.0, y * 4.0)
+
+            angle = anglesData[x]
+            cos = np.cos(angle)
+            sin = np.sin(angle)
+
+            h = xData0[x] + xData2[x]
+            w = xData1[x] + xData3[x]
+
+            # extend the bounding box to 2% of total width and height
+            # widthextension = (fullwidth / 100) * 2
+            # heightextension = (fullheight / 100) * 2
+
+            widthextension = 10
+            heightextension = 10
+
+            endX = (int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))) + widthextension
+            endY = (int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))) + heightextension
+            startX = (int(endX - w)) - widthextension
+            startY = (int(endY - h)) - heightextension
+
+            if (startX < 0):
+                startX = 0
+            if (startY < 0):
+                startY = 0
+
+            # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
+
+            rects.append((startX, startY, endX, endY))
+            confidences.append(scoresData[x])
+
+    boxes = non_max_suppression(np.array(rects), probs=confidences)
+
+    for (startX, startY, endX, endY) in boxes:
+        startX = int(startX * rW)
+        startY = int(startY * rH)
+        endX = int(endX * rW)
+        endY = int(endY * rH)
+
+        # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
+        cv2.rectangle(orig, (startX, startY), (endX, endY), (0, 255, 0), 2)
+
+        textboxx = [startX, startY, endX, endY]
+        textboxesxxx.append(textboxx)
+
+    # cv2.imshow("Text Detection", orig)
+    # cv2.waitKey(0)
+    # print(textboxesxxx)
+    return textboxesxxx
+
+
+# call this method and pass model name to get the dimensions of train image of a model
+@app.route('/getimagedimensions', methods = ['POST'])
+def getimagedimensions():
+    modelname = request.form['modelname']
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    query = 'select top 1 * from eyesight.dbo.' + modelname + ';'
+    cursor.execute(query)
+    dimensions = []
+    # row = cursor[0]
+    # width = row[8]
+    # height = row[9]
+    # dimensions.append(width)
+    # dimensions.append(height)
+
+    for row in cursor:
+        width = int(row[8])
+        height = int (row[9])
+        dimensions.append(width)
+        dimensions.append(height)
+    print(dimensions)
+    return str(dimensions)
+
+
+# call this method and pass model name to get the model metadata table in list of lists format
+@app.route('/fetchexistingmodel', methods = ['POST'])
+def fetchexistingmodel():
+    modelname = request.form['modelname']
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    query = 'select * from eyesight.dbo.' + modelname + ';'
+    cursor.execute(query)
+    rows = []
+    for row in cursor:
+        rows.append(row)
+    rows = str(rows)
+    # rows.replace("(", "[")
+    # rows.replace(")", "]")
+    # response = json.dumps(rows)
+    print(rows)
+    return rows
+
+
+# call this method to retrain the model
+@app.route('/retrain', methods = ['POST'])
+def retrain():
+    try:
+        model = (request.form['model']).strip()
+        label = (request.form['label']).strip()
+        xaxisnew = (request.form['xaxis']).strip()
+        yaxisnew = (request.form['yaxis']).strip()
+        widthnew = (request.form['width']).strip()
+        heightnew = (request.form['height']).strip()
+
+        rotatenew = (request.form['rotate']).strip()
+        scalexnew = (request.form['scalex']).strip()
+        scaleynew = (request.form['scaley']).strip()
+        fullwidthnew = (request.form['fullwidth']).strip()
+        fullheightnew = (request.form['fullheight']).strip()
+
+        textnew = (request.form['text']).strip()
+        headernew = (request.form['header']).strip()
+        hpositionnew = (request.form['hposition']).strip()
+        htolnew = (request.form['htol']).strip()
+        footernew = (request.form['footer']).strip()
+
+        fpositionnew = (request.form['fposition']).strip()
+        ftolnew = (request.form['ftol']).strip()
+        isthrenew = (request.form['isthre']).strip()
+        colorcutnew = (request.form['colorcut']).strip()
+        thresholdnew = (request.form['threshold']).strip()
+
+        textnaturenew = (request.form['textnature']).strip()
+        languagenew = (request.form['language']).strip()
+        iskeynew = (request.form['iskey']).strip()
+        kpositionnew = (request.form['kposition']).strip()
+        ktolnew = (request.form['ktol']).strip()
+
+        keyvalnew = (request.form['keyval']).strip()
+        leftindexnew = (request.form['leftindex']).strip()
+        lipositionnew = (request.form['liposition']).strip()
+        litolnew = (request.form['litol']).strip()
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor1 = conn.cursor()
+        table = 'dbo.' + model
+        updatequery = 'UPDATE ' + table + ' SET xaxis = ' + xaxisnew + ', yaxis= ' + yaxisnew + ', width= ' + widthnew + ', height= ' + heightnew + ', rotate= ' + rotatenew + ', scalex= ' + scalexnew + ', scaley= ' + scaleynew + ', fullwidth= ' + fullwidthnew + ', fullheight= ' + fullheightnew + ', text= ' + '\'' + textnew + '\'' + ', header= ' + '\'' + headernew + '\'' + ', hposition= ' + '\'' + hpositionnew + '\'' + ', htol= ' + '\'' + htolnew + '\'' + ', footer= ' + '\'' + footernew + '\'' + ', fposition= ' + '\'' + fpositionnew + '\'' + ', ftol= ' + '\'' + ftolnew + '\'' + ', isthre= ' + '\'' + isthrenew + '\'' + ', colorcut= ' + '\'' + colorcutnew + '\'' + ', threshold= ' + '\'' +thresholdnew + '\'' + ', textnature= ' + '\'' + textnaturenew + '\'' + ', language= ' + '\'' + languagenew + '\'' + ', iskey= ' + '\'' + iskeynew + '\'' + ', kposition= ' + '\'' + kpositionnew + '\'' + ', ktol= ' + '\'' + ktolnew + '\'' + ', keyval= ' + '\'' + keyvalnew + '\'' + ', leftindex= ' + '\'' + leftindexnew + '\'' + ', liposition= ' + '\'' + lipositionnew + '\'' + ', litol= ' + '\'' + litolnew + '\'' + ' WHERE label = ' + '\'' + label + '\'' + ';'
+
+        cursor1.execute(updatequery)
+        conn.commit()
+        conn.close()
+        return sendresponse("model retrained", 200)
+
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("failed to train model", 201)
+
+
+# call this method to retrain the header
+@app.route('/retrainheader', methods = ['POST'])
+def retrainheader():
+    try:
+        model = (request.form['model']).strip()
+        label = (request.form['label']).strip()
+        xaxisnew = (request.form['xaxis']).strip()
+        yaxisnew = (request.form['yaxis']).strip()
+        widthnew = (request.form['width']).strip()
+        heightnew = (request.form['height']).strip()
+
+        rotatenew = (request.form['rotate']).strip()
+        scalexnew = (request.form['scalex']).strip()
+        scaleynew = (request.form['scaley']).strip()
+        fullwidthnew = (request.form['fullwidth']).strip()
+        fullheightnew = (request.form['fullheight']).strip()
+
+        textnew = (request.form['text']).strip()
+        headernew = (request.form['header']).strip()
+        hpositionnew = (request.form['hposition']).strip()
+        htolnew = (request.form['htol']).strip()
+        footernew = (request.form['footer']).strip()
+
+        fpositionnew = (request.form['fposition']).strip()
+        ftolnew = (request.form['ftol']).strip()
+        isthrenew = (request.form['isthre']).strip()
+        colorcutnew = (request.form['colorcut']).strip()
+        thresholdnew = (request.form['threshold']).strip()
+
+        textnaturenew = (request.form['textnature']).strip()
+        languagenew = (request.form['language']).strip()
+        iskeynew = (request.form['iskey']).strip()
+        kpositionnew = (request.form['kposition']).strip()
+        ktolnew = (request.form['ktol']).strip()
+
+        keyvalnew = (request.form['keyval']).strip()
+        leftindexnew = (request.form['leftindex']).strip()
+        lipositionnew = (request.form['liposition']).strip()
+        litolnew = (request.form['litol']).strip()
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor1 = conn.cursor()
+        table = 'dbo.' + model
+        updatequery = 'UPDATE ' + table + ' SET xaxis = ' + xaxisnew + ', yaxis= ' + yaxisnew + ', width= ' + widthnew + ', height= ' + heightnew + ', rotate= ' + rotatenew + ', scalex= ' + scalexnew + ', scaley= ' + scaleynew + ', fullwidth= ' + fullwidthnew + ', fullheight= ' + fullheightnew + ', text= ' + '\'' + textnew + '\'' + ', header= ' + '\'' + headernew + '\'' + ', hposition= ' + '\'' + hpositionnew + '\'' + ', htol= ' + '\'' + htolnew + '\'' + ', footer= ' + '\'' + footernew + '\'' + ', fposition= ' + '\'' + fpositionnew + '\'' + ', ftol= ' + '\'' + ftolnew + '\'' + ', isthre= ' + '\'' + isthrenew + '\'' + ', colorcut= ' + '\'' + colorcutnew + '\'' + ', threshold= ' + '\'' +thresholdnew + '\'' + ', textnature= ' + '\'' + textnaturenew + '\'' + ', language= ' + '\'' + languagenew + '\'' + ', iskey= ' + '\'' + iskeynew + '\'' + ', kposition= ' + '\'' + kpositionnew + '\'' + ', ktol= ' + '\'' + ktolnew + '\'' + ', keyval= ' + '\'' + keyvalnew + '\'' + ', leftindex= ' + '\'' + leftindexnew + '\'' + ', liposition= ' + '\'' + lipositionnew + '\'' + ', litol= ' + '\'' + litolnew + '\'' + ' WHERE header = ' + '\'' + headernew + '\'' + ';'
+
+        cursor1.execute(updatequery)
+        conn.commit()
+        conn.close()
+        return sendresponse("model retrained", 200)
+
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("failed to train model", 201)
+
+
+# call this method to retrain the footer
+@app.route('/retrainfooter', methods = ['POST'])
+def retrainfooter():
+    try:
+        model = (request.form['model']).strip()
+        label = (request.form['label']).strip()
+        xaxisnew = (request.form['xaxis']).strip()
+        yaxisnew = (request.form['yaxis']).strip()
+        widthnew = (request.form['width']).strip()
+        heightnew = (request.form['height']).strip()
+
+        rotatenew = (request.form['rotate']).strip()
+        scalexnew = (request.form['scalex']).strip()
+        scaleynew = (request.form['scaley']).strip()
+        fullwidthnew = (request.form['fullwidth']).strip()
+        fullheightnew = (request.form['fullheight']).strip()
+
+        textnew = (request.form['text']).strip()
+        headernew = (request.form['header']).strip()
+        hpositionnew = (request.form['hposition']).strip()
+        htolnew = (request.form['htol']).strip()
+        footernew = (request.form['footer']).strip()
+
+        fpositionnew = (request.form['fposition']).strip()
+        ftolnew = (request.form['ftol']).strip()
+        isthrenew = (request.form['isthre']).strip()
+        colorcutnew = (request.form['colorcut']).strip()
+        thresholdnew = (request.form['threshold']).strip()
+
+        textnaturenew = (request.form['textnature']).strip()
+        languagenew = (request.form['language']).strip()
+        iskeynew = (request.form['iskey']).strip()
+        kpositionnew = (request.form['kposition']).strip()
+        ktolnew = (request.form['ktol']).strip()
+
+        keyvalnew = (request.form['keyval']).strip()
+        leftindexnew = (request.form['leftindex']).strip()
+        lipositionnew = (request.form['liposition']).strip()
+        litolnew = (request.form['litol']).strip()
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor1 = conn.cursor()
+        table = 'dbo.' + model
+        updatequery = 'UPDATE ' + table + ' SET xaxis = ' + xaxisnew + ', yaxis= ' + yaxisnew + ', width= ' + widthnew + ', height= ' + heightnew + ', rotate= ' + rotatenew + ', scalex= ' + scalexnew + ', scaley= ' + scaleynew + ', fullwidth= ' + fullwidthnew + ', fullheight= ' + fullheightnew + ', text= ' + '\'' + textnew + '\'' + ', header= ' + '\'' + headernew + '\'' + ', hposition= ' + '\'' + hpositionnew + '\'' + ', htol= ' + '\'' + htolnew + '\'' + ', footer= ' + '\'' + footernew + '\'' + ', fposition= ' + '\'' + fpositionnew + '\'' + ', ftol= ' + '\'' + ftolnew + '\'' + ', isthre= ' + '\'' + isthrenew + '\'' + ', colorcut= ' + '\'' + colorcutnew + '\'' + ', threshold= ' + '\'' +thresholdnew + '\'' + ', textnature= ' + '\'' + textnaturenew + '\'' + ', language= ' + '\'' + languagenew + '\'' + ', iskey= ' + '\'' + iskeynew + '\'' + ', kposition= ' + '\'' + kpositionnew + '\'' + ', ktol= ' + '\'' + ktolnew + '\'' + ', keyval= ' + '\'' + keyvalnew + '\'' + ', leftindex= ' + '\'' + leftindexnew + '\'' + ', liposition= ' + '\'' + lipositionnew + '\'' + ', litol= ' + '\'' + litolnew + '\'' + ' WHERE footer = ' + '\'' + footernew + '\'' + ';'
+
+        print("fucked here, footer : " + updatequery)
+        cursor1.execute(updatequery)
+        conn.commit()
+        conn.close()
+        return sendresponse("model retrained", 200)
+
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("failed to train model", 201)
+
+
+# call this method to retrain the left index
+@app.route('/retrainleftindex', methods = ['POST'])
+def retrainleftindex():
+    try:
+        model = (request.form['model']).strip()
+        label = (request.form['label']).strip()
+        xaxisnew = (request.form['xaxis']).strip()
+        yaxisnew = (request.form['yaxis']).strip()
+        widthnew = (request.form['width']).strip()
+        heightnew = (request.form['height']).strip()
+
+        rotatenew = (request.form['rotate']).strip()
+        scalexnew = (request.form['scalex']).strip()
+        scaleynew = (request.form['scaley']).strip()
+        fullwidthnew = (request.form['fullwidth']).strip()
+        fullheightnew = (request.form['fullheight']).strip()
+
+        textnew = (request.form['text']).strip()
+        headernew = (request.form['header']).strip()
+        hpositionnew = (request.form['hposition']).strip()
+        htolnew = (request.form['htol']).strip()
+        footernew = (request.form['footer']).strip()
+
+        fpositionnew = (request.form['fposition']).strip()
+        ftolnew = (request.form['ftol']).strip()
+        isthrenew = (request.form['isthre']).strip()
+        colorcutnew = (request.form['colorcut']).strip()
+        thresholdnew = (request.form['threshold']).strip()
+
+        textnaturenew = (request.form['textnature']).strip()
+        languagenew = (request.form['language']).strip()
+        iskeynew = (request.form['iskey']).strip()
+        kpositionnew = (request.form['kposition']).strip()
+        ktolnew = (request.form['ktol']).strip()
+
+        keyvalnew = (request.form['keyval']).strip()
+        leftindexnew = (request.form['leftindex']).strip()
+        lipositionnew = (request.form['liposition']).strip()
+        litolnew = (request.form['litol']).strip()
+
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor1 = conn.cursor()
+        table = 'dbo.' + model
+        updatequery = 'UPDATE ' + table + ' SET xaxis = ' + xaxisnew + ', yaxis= ' + yaxisnew + ', width= ' + widthnew + ', height= ' + heightnew + ', rotate= ' + rotatenew + ', scalex= ' + scalexnew + ', scaley= ' + scaleynew + ', fullwidth= ' + fullwidthnew + ', fullheight= ' + fullheightnew + ', text= ' + '\'' + textnew + '\'' + ', header= ' + '\'' + headernew + '\'' + ', hposition= ' + '\'' + hpositionnew + '\'' + ', htol= ' + '\'' + htolnew + '\'' + ', footer= ' + '\'' + footernew + '\'' + ', fposition= ' + '\'' + fpositionnew + '\'' + ', ftol= ' + '\'' + ftolnew + '\'' + ', isthre= ' + '\'' + isthrenew + '\'' + ', colorcut= ' + '\'' + colorcutnew + '\'' + ', threshold= ' + '\'' +thresholdnew + '\'' + ', textnature= ' + '\'' + textnaturenew + '\'' + ', language= ' + '\'' + languagenew + '\'' + ', iskey= ' + '\'' + iskeynew + '\'' + ', kposition= ' + '\'' + kpositionnew + '\'' + ', ktol= ' + '\'' + ktolnew + '\'' + ', keyval= ' + '\'' + keyvalnew + '\'' + ', leftindex= ' + '\'' + leftindexnew + '\'' + ', liposition= ' + '\'' + lipositionnew + '\'' + ', litol= ' + '\'' + litolnew + '\'' + ' WHERE leftindex = ' + '\'' + leftindexnew + '\'' + ';'
+
+        print("fucked here, leftindex : " + updatequery)
+        cursor1.execute(updatequery)
+        conn.commit()
+        conn.close()
+        return sendresponse("model retrained", 200)
+
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("failed to train model", 201)
+
+
+# call this method to authenticate users
+@app.route('/login', methods = ['GET', 'POST'])
+def login():
+    # id = request.args.get('id')
+    # password = request.args.get('password')
+    id = request.form['id']
+    password = request.form['password']
+
+    print(id + " " + password)
+
+    if (id == "admin"):
+        if (password == "ey@123"):
+            # return "authenticated"
+            return sendresponse("authenticated", 200)
+        else:
+            # return "password wrong"
+            return sendresponse("password wrong", 201)
+    else:
+        # return "invalid user"
+        return sendresponse("invalid user", 201)
+
+
+# call this method to crop header, footer and left index
+@app.route('/crophfl', methods = ['GET', 'POST'])
+def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut):
+    global headerfound
+    global leftindexfound
+
+    try:
+        inputimage = cv2.imread(local_save_input_test_file)
+        inputimage = Image.fromarray(inputimage)
+        # processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+        # processedimage.save(local_save_input_test_file)
+        boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+        boxes.sort(key=lambda lis: lis[1])
+        print ("Ascending sorted:")
+        print (boxes)
+    except Exception as e:
+        print(e)
+
+    for model in modelsmetadata:
+        model = [x for x in model]
+
+        if model[12] == "true":
+            originalheader = model[11]
+            originalheaderxaxis = model[1]
+            originalheaderyaxis = model[2]
+            originalheaderheight = model[4]
+            originalheaderwidth = model[3]
+            headerfound = int(originalheaderyaxis)
+
+            # currently not in use
+            if model[18] == "true":
+                originalheaderthreshold = model[20]
+                originalheadercolorcut = model[19]
+            else:
+                originalheaderthreshold = "-"
+                originalheadercolorcut = "-"
+
+            try:
+                for [startX, startY, endX, endY] in boxes:
+                    left = startX
+                    top = startY
+                    right = left + originalheaderwidth
+                    bottom = top + originalheaderheight
+                    cropped_image = cropimage(processedimage, left, top, right, bottom)
+                    result_text = invoketesseract(cropped_image)
+                    similarityratio = similar(originalheader, result_text)
+
+                    if (similarityratio > 0.8):
+                        final_image = cropimage(inputimage, 0, top, originalimagesizewidth, originalimagesizeheight)
+                        # cv2.imshow('Enhanced image', final_image)
+                        # cv2.waitKey(0)
+                        final_image.save(local_save_input_test_file)
+                        headerfound = 0
+                        break
+                    else:
+                        print("Cannot find header in the provided image")
+            except Exception as e:
+                print(e)
+
+        elif model[15] == "true":
+            originalfooter = model[11]
+            originalfooterheight = model[4]
+            originalfooterwidth = model[3]
+            if model[18] == "true":
+                originalfooterthreshold = model[20]
+                originalfootercolorcut = model[19]
+            else:
+                originalfooterthreshold = "-"
+                originalfootercolorcut = "-"
+
+            try:
+                inputimage = cv2.imread(local_save_input_test_file)
+                headcroppedimgheight, headcroppedimgwidth, channels = inputimage.shape
+                inputimage = Image.fromarray(inputimage)
+                processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+                processedimage.save(local_save_input_test_file)
+                boxes = gettextboxes(local_save_input_test_file, 0, 0)
+                boxes.sort(key=lambda lis: lis[1], reverse=True)
+                print("Descending sorted:")
+                print(boxes)
+                for [startX, startY, endX, endY] in boxes:
+                    left = startX
+                    top = startY
+                    right = left + originalfooterwidth
+                    bottom = top + originalfooterheight
+                    cropped_image = cropimage(processedimage, left, top, right, bottom)
+                    result_text = invoketesseract(cropped_image)
+
+                    similarityratio = similar(originalfooter, result_text)
+
+                    if (similarityratio > 0.8):
+                        final_image = cropimage(inputimage, 0, 0, headcroppedimgwidth, bottom)
+                        # cv2.imshow('Enhanced image', final_image)
+                        # cv2.waitKey(0)
+                        final_image.save(local_save_input_test_file)
+                        break
+                    else:
+                        print("Cannot find footer in the provided image")
+            except Exception as e:
+                print(e)
+
+        elif model[27] == "true":
+            originalleftindex = model[11]
+            originalleftindexxaxis = model[1]
+            originalleftindexyaxis = model[2]
+            originalleftindexheight = model[4]
+            originalleftindexwidth = model[3]
+            leftindexfound = int(originalleftindexxaxis)
+            if model[18] == "true":
+                originalleftindexthreshold = model[20]
+                originalleftindexcolorcut = model[19]
+            else:
+                originalleftindexthreshold = "-"
+                originalleftindexcolorcut = "-"
+
+            try:
+                inputimage = cv2.imread(local_save_input_test_file)
+                footcroppedimgheight, footcroppedimgwidth, channels = inputimage.shape
+                inputimage = Image.fromarray(inputimage)
+                processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+                processedimage.save(local_save_input_test_file)
+                boxes = gettextboxes(local_save_input_test_file, 0, 0)
+                boxes.sort(key=lambda lis: lis[0])
+                print("X Ascending sorted:")
+                print(boxes)
+                for [startX, startY, endX, endY] in boxes:
+                    left = startX
+                    top = startY
+                    right = left + originalleftindexwidth
+                    bottom = top + originalleftindexheight
+                    cropped_image = cropimage(processedimage, left, top, right, bottom)
+                    result_text = invoketesseract(cropped_image)
+
+                    similarityratio = similar(originalleftindex, result_text)
+
+                    if (similarityratio > 0.8):
+                        final_image = cropimage(inputimage, left, 0, footcroppedimgwidth, footcroppedimgheight)
+                        # cv2.imshow('Enhanced image', final_image)
+                        # cv2.waitKey(0)
+                        final_image.save(local_save_input_test_file)
+                        leftindexfound = 0
+                        break
+                    else:
+                        print("Cannot find left index in the provided image")
+            except Exception as e:
+                print(e)
+
+
+# call this method with a model name to delete it in DB
+@app.route('/deletemodel', methods = ['POST'])
+def deletemodel():
+    try:
+        modelname = request.form['model']
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        # query = 'select * from eyesight.dbo.' + modelname + ';'
+        query = 'DROP TABLE dbo.' + modelname + ';'
+        query1 = 'DELETE from dbo.models WHERE model = ' + '\'' + modelname + '\'' +';'
+        print (query1)
+        cursor.execute(query)
+        cursor.execute(query1)
+        conn.commit()
+        conn.close()
+        return sendresponse("model deleted", 200)
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("cannot delete model", 201)
+
+
+# call this method to get previos header and left index coordinates
+@app.route('/getoldheadleft', methods = ['POST'])
+def getoldheadleft():
+    try:
+        modelname = request.form['model']
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+
+        try:
+            query = '''select yaxis from eyesight.dbo.''' + modelname + ''' where header = 'true';'''
+            # querystring = "select label from eyesight.dbo." + modelname + " where label != '-';"
+            cursor.execute(query)
+            for row in cursor:
+                headeryaxis = row
+            headeryaxis = str(headeryaxis)
+            headeryaxis = headeryaxis.replace('(', '')
+            headeryaxis = headeryaxis.replace(')', '')
+            headeryaxis = headeryaxis.replace(',', '')
+            headeryaxis = headeryaxis.replace(' ', '')
+            headeryaxis = headeryaxis.replace('\'', '')
+        except Exception as e:
+            print("error : " + str(e))
+
+        try:
+            query = '''select xaxis from eyesight.dbo.''' + modelname + ''' where leftindex = 'true';'''
+            cursor.execute(query)
+            for row in cursor:
+                leftindexxaxis = row
+            leftindexxaxis = str(leftindexxaxis)
+            leftindexxaxis = leftindexxaxis.replace('(', '')
+            leftindexxaxis = leftindexxaxis.replace(')', '')
+            leftindexxaxis = leftindexxaxis.replace(',', '')
+            leftindexxaxis = leftindexxaxis.replace(' ', '')
+            headeryaxis = headeryaxis.replace('\'', '')
+        except Exception as e:
+            print("error : " + str(e))
+
+        conn.commit()
+        conn.close()
+
+        result = str ([headeryaxis, leftindexxaxis])
+
+        return sendresponse(result, 200)
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse(str(e), 201)
+
+
+# call this method to get details of a model
+@app.route('/getmodeledtails', methods = ['POST'])
+def getmodeledtails():
+    try:
+        modelname = request.form['model']
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        query = 'select * from eyesight.dbo.models where model = \'' + modelname + '\';'
+        # query = 'DROP TABLE dbo.' + modelname + ';'
+        cursor.execute(query)
+        rows = []
+        for row in cursor:
+            rows.append(row)
+        rows = str(rows)
+        conn.commit()
+        conn.close()
+        return sendresponse(rows, 200)
+    except Exception as e:
+        print("error : " + str(e))
+        return sendresponse("cannot fetch model details", 201)
+
+
+# call this method to get initial threshold and colorcut corrected image
+@app.route('/initialimageprocess', methods = ['POST'])
+def initialimageprocess():
+    try:
+        data = request.get_json()
+        if data is None:
+            print("No valid request body, json missing!")
+            return jsonify({'error': 'No valid request body, json missing!'})
+        else:
+            img_data = data['thumbnail']
+            threshold = int(data['threshold'])
+            colorcut = int(data['colorcut'])
+            corrstring = img_data + "=="
+            # corrstring = re.sub(r'.*,', ',', corrstring)
+            # corrstring = corrstring.replace(",", "")
+
+            # stringToRGB(corrstring, local_save_cropped_file)
+            img = imread(io.BytesIO(base64.b64decode(corrstring)))
+            cv2_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            final = enhancecroppedpicruntime(threshold, colorcut, cv2_img)
+            # print (type(final))
+            # final.show()
+            final = np.array(final)
+            string = base64.b64encode(cv2.imencode('.jpg', final)[1]).decode()
+            message = {"status": 200, "imagestring": string}
+            response = jsonify(message)
+            response.status_code = 200
+            return response
+            # cv2.imshow('Received image', final)
+            # cv2.waitKey(0)
+            # return final
+            # return sendresponse("ok", 200)
+
+    except Exception as e:
+        resultstring = 'failed to get text!!!' + str(e)
+        print(resultstring)
+        return sendresponse(resultstring, 201)
+
+
+def similar(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
+
+# sending API response back to client
+def sendresponse(message, statuscode):
+    print("string - " + message)
+    message1 = {"status": statuscode, "string": message}
+    response = jsonify(message1)
+    response.status_code = statuscode
+    return response
+
+
+# get image base64 and save it locally
+def stringToRGB(base64_string, filename):
+    img = imread(io.BytesIO(base64.b64decode(base64_string)))
+    cv2_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(filename, cv2_img)
+
+
+# get image and convert it into base64
+def RGBTostring():
+    img = cv2.imread(local_save_cropped_file)
+    string = base64.b64encode(cv2.imencode('.jpg', img)[1]).decode()
+    return string
+
+
+# image processing steps
+# 1st method to call
+def trim(im):
+    bg = Image.new(im.mode, im.size, im.getpixel((0,0)))
+    diff = ImageChops.difference(im, bg)
+    diff = ImageChops.add(diff, diff, 2.0, -100)
+    bbox = diff.getbbox()
+    if bbox:
+        return im.crop(bbox)
+
+
+def gettextfromcroppedpic(local_save_input_test_file, modelname, textboxesl):
+    try:
+        extractedtext = []
+        conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                              'Server=IN2371790W1\SQLEXPRESS;'
+                              'Database=eyesight;'
+                              'Trusted_Connection=yes;')
+        cursor = conn.cursor()
+        query = 'select * from eyesight.dbo.' + modelname + ';'
+        cursor.execute(query)
+        for row in cursor:
+            xaxis = row[1]
+            yaxis = row[2]
+            width = row[3]
+            height = row[4]
+            fullwidthl = row[8]
+            fullheightl = row[9]
+            label = row[10]
+            print(row)
+
+            im = Image.open(local_save_input_test_file)
+            fullwidth, fullheight = im.size
+
+            fullwidthl = int(fullwidthl)
+            fullheightl = int(fullheightl)
+
+            resizedimage = resizeimage(fullwidthl, fullheightl)
+            resizedimage = Image.fromarray(resizedimage)
+            try:
+                resizedimage.save(local_save_input_test_file)
+            except Exception as e:
+                if "RGBA" in str(e):
+                    resizedimage = resizedimage.convert("RGB")
+                    resizedimage.save(local_save_input_test_file)
+                    print(e)
+                else:
+                    print(e)
+
+            left = int(xaxis)
+            top = int(yaxis)
+            right = int(width + xaxis)
+            bottom = int(height + yaxis)
+
+            textboxes = textboxesl
+
+            xalignedboxes = []
+
+            for textbox in textboxes:
+                startx = int(textbox[0])
+                diff = abs(startx - left)
+                if (diff <= 5):
+                    xalignedboxes.append(textbox)
+
+            yalignedboxes = []
+
+            for xalignedbox in xalignedboxes:
+                starty = int(xalignedbox[1])
+                diff = abs(starty - top)
+                if (diff <= 5):
+                    yalignedboxes.append(xalignedbox)
+
+            print("final box - " + str(yalignedboxes))
+
+            noofpoints = len(yalignedboxes)
+
+            if (noofpoints > 1):
+                yaxislist = []
+                for yaxis in yalignedboxes:
+                    i = yaxis[1]
+                    yaxislist.append(i)
+                correct = min(yaxislist, key=lambda x: abs(x - top))
+                correctindex = yaxislist.index(correct)
+                correctlist = yalignedboxes[correctindex]
+            else:
+                correctlist = yalignedboxes[0]
+
+
+            # leftbox = yalignedboxes[0]
+            left1 = correctlist[0]
+            top1 = correctlist[1]
+            right1 = width + left1
+            bottom1 = height + top1
+
+
+            im1 = resizedimage.crop((left1, top1, right1, bottom1))
+            # im1.show()
+            rgb = im1.convert('RGB')
+
+            try:
+                resultstring = tesserocr.image_to_text(rgb, lang="eng")  # print ocr text from image
+                resultstring = resultstring.strip()
+                print(label + "-" + resultstring)
+                result = label + "-" + resultstring
+                extractedtext.append(result)
+            except Exception as e:
+                print(e)
+        print(extractedtext)
+        nullstring = " "
+        filledstring = nullstring.join(str(x) for x in extractedtext)
+        # return sendresponse(filledstring, 200)
+        return filledstring
+    except Exception as e:
+        return str(e) + "failed to extract text"
+
+
+def fetchmodeldetails(model):
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    query = 'select * from eyesight.dbo.models where model = ' + '\'' + model + '\'' + ';'
+    cursor.execute(query)
+    modelmetadata = []
+    for row in cursor:
+        # modelmetadata.append(row)
+        for element in row:
+            modelmetadata.append(element)
+    return modelmetadata
+
+
+# def keybased(model, key_width, key_height, local_save_input_test_file):
+#     inputimage = cv2.imread(local_save_input_test_file)
+#     inputimage = Image.fromarray(inputimage)
+#     processedimage = enhancecroppedpicruntime("-", "-", inputimage)
+#     processedimage.save(local_save_input_test_file)
+#     txtboxx = []
+#     # for model in modelsmetadata:
+#     model = [x for x in model]
+#
+#     if model[23] == 'true':
+#         originaltextwidth = model[3]
+#         originaltextheight = model[4]
+#         originalimagesizewidth = model[8]
+#         originalimagesizeheight = model[9]
+#         keyval = model[26]
+#         kposition = model[24]
+#
+#         boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+#
+#         for [startX, startY, endX, endY] in boxes:
+#             cropped_image = cropimage(processedimage, startX, startY, startX + key_width,
+#                                       startY + key_height)
+#             result_text = invoketesseract(cropped_image)
+#             similarityratio = similar(keyval, result_text)
+#
+#             if similarityratio > 0.8:
+#                 txtbox = [startX, startY, endX, endY]
+#
+#                 if kposition == 'below':
+#                     sortedbox = boxes.sort(key=lambda a: a[1])
+#                     print ("sorted boxes:")
+#                     print (boxes)
+#                     print (sortedbox)
+#                     index = boxes.index(txtbox)
+#                     print (type(index))
+#
+#
+#                     value = sorted([boxes[i] if (boxes[i][1] == boxes[index + 1][1]) or (boxes[i][1] in range(boxes[index + 1][4] - 0.05 * originalimagesizeheight, boxes[index][4] + 0.05 * originalimagesizeheight)) else boxes[index + 1] for i in range(index + 2, len(boxes))], key=lambda x: x[0])
+#
+#                     yfiltered = boxes [(index + 1):(len(boxes))]
+#                     print (yfiltered)
+#
+#                     [startX, startY, endX, endY] = value[0]
+#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+#                                               startY + originaltextheight)
+#                     result_text = invoketesseract(cropped_image)
+#                     # sendresponse(result_text, 200)
+#                     print(result_text)
+#                     return (result_text)
+#
+#                 elif kposition == 'above':
+#                     boxes.sort(key=lambda lis: lis[1])
+#                     index = boxes.index(txtbox)
+#                     value = sorted([boxes[i] if boxes[i][1] == boxes[index - 1][1] or boxes[i][1] in range(
+#                         boxes[index - 1][1] - 0.05 * originalimagesizeheight,
+#                         boxes[index][1] + 0.05 * originalimagesizeheight) else
+#                                     boxes[index - 1] for i in range(0, index)], key=lambda x: x[0])
+#                     [startX, startY, endX, endY] = value[0]
+#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+#                                               startY + originaltextheight)
+#                     result_text = invoketesseract(cropped_image)
+#                     # sendresponse(result_text, 200)
+#                     print(result_text)
+#                     return (result_text)
+#
+#                 elif kposition == 'right':
+#                     boxes.sort(key=lambda lis: lis[0])
+#                     index = boxes.index(txtbox)
+#                     value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] + 0.05 * originalimagesizewidth,
+#                                                                      boxes[index][3] + 0.05 * originalimagesizewidth) or
+#                                                 boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
+#                                                                      boxes[index][
+#                                                                          1] + 0.05 * originalimagesizeheight) else
+#                                     boxes[index + 1] for i in range(index + 1, len(boxes))], key=lambda x: x[0])
+#                     [startX, startY, endX, endY] = value[0]
+#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+#                                               startY + originaltextheight)
+#                     result_text = invoketesseract(cropped_image)
+#                     # sendresponse(result_text, 200)
+#                     print(result_text)
+#                     return (result_text)
+#
+#                 elif kposition == 'left':
+#                     boxes.sort(key=lambda lis: lis[0])
+#                     index = boxes.index(txtbox)
+#                     value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] - 0.05 * originalimagesizewidth,
+#                                                                      boxes[index][3] - 0.05 * originalimagesizewidth) or
+#                                                 boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
+#                                                                      boxes[index][
+#                                                                          1] + 0.05 * originalimagesizeheight) else
+#                                     boxes[index - 1] for i in range(0, index)], key=lambda x: x[0])
+#                     [startX, startY, endX, endY] = value[0]
+#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+#                                               startY + originaltextheight)
+#                     result_text = invoketesseract(cropped_image)
+#                     # sendresponse(result_text, 200)
+#                     print(result_text)
+#                     return (result_text)
+#
+#                 else:
+#                     sendresponse("cannot find value for this key", 201)
+#             else:
+#                 sendresponse("cannot find value for this key", 201)
+#     else:
+#         print("No key for this parameter")
+
+
+def keybased(model, local_save_input_test_file):
+    inputimage = cv2.imread(local_save_input_test_file)
+    inputimage = Image.fromarray(inputimage)
+    processedimage = enhancecroppedpicruntime("-", "-", inputimage)
+    processedimage.save(local_save_input_test_file)
+    txtboxx = []
+    # for model in modelsmetadata:
+    model = [x for x in model]
+
+    originaltextwidth = model[3]
+    originaltextheight = model[4]
+    originalimagesizewidth = model[8]
+    originalimagesizeheight = model[9]
+    keyval = model[26]
+    kposition = model[24]
+
+    kori = model[30]
+    koriper = model[31]
+
+    # uncomment these lines after adding these columns in db
+    key_width = model[6]
+    key_height = model[7]
+
+    boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+    boxes.sort(key=lambda x: x[1])
+
+    for [startX, startY, endX, endY] in boxes:
+        cropped_image = cropimage(processedimage, int(startX), int(startY), int(startX) + int(key_width), int(startY) + int(key_height))
+        # cropped_image.show()
+        result_text = invoketesseract(cropped_image)
+        similarityratio = similar(keyval, result_text)
+
+        if similarityratio > 0.8:
+            keybox = [startX, startY, endX, endY]
+            keyxaxis = keybox[0]
+            keyyaxis = keybox[1]
+
+            if kposition == 'below':
+                boxes.sort(key=lambda a: a[1])
+                print("sorted boxes:")
+                print(boxes)
+                # print(sortedbox)
+                index = boxes.index(keybox)
+                print(index)
+
+                # getting boxes below key value box
+                boxesbelowkey = boxes[(index + 1):(len(boxes))]
+                print("boxes below key - " + str(boxesbelowkey))
+
+                yfiltered = []
+
+                ypercentage = 2
+                yvision = originalimagesizeheight / 100
+                yvision = yvision * ypercentage
+                print("vision - " + str(yvision))
+
+                for textbox in boxesbelowkey:
+                    txtyaxis = int(textbox[1])
+                    diff = abs(txtyaxis - keyyaxis)
+                    if (diff > yvision):
+                        yfiltered.append(textbox)
+
+                print("y-aligned boxes - " + str(yfiltered))
+
+                # get all the boxes that are aligned to x axis of the key box
+                xalignedboxes = []
+
+                percentage = float(koriper)
+                vision = originalimagesizewidth / 100
+                vision = vision * percentage
+                print("vision - " + str(vision))
+
+
+                for textbox in yfiltered:
+                    startx = int(textbox[0])
+                    diff = abs(startx - keyxaxis)
+
+                    if (diff <= vision):
+                        xalignedboxes.append(textbox)
+                print ("x-aligned boxes - " + str(xalignedboxes))
+
+                xalignedboxes2 = []
+
+                for textbox in xalignedboxes:
+                    startx1 = int(textbox[0])
+                    if (kori == "left"):
+                        if (startx1 < keyxaxis):
+                            xalignedboxes2.append(textbox)
+                    if (kori == "right"):
+                        if (startx1 > keyxaxis):
+                            xalignedboxes2.append(textbox)
+                    if (kori == "immediate"):
+                        xalignedboxes2.append(textbox)
+
+
+                # sort the x aligned boxed in ascending oreder of y axis
+                xalignedboxes2.sort(key=lambda y: y[1])
+                print (xalignedboxes2)
+                
+                # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
+                xalignedboxes2 = xalignedboxes2[:3]
+
+                # sort again based on x axis
+                xalignedboxes2.sort(key=lambda y: y[0])
+                print(xalignedboxes2)
+
+
+                zeroeddownbox1 = xalignedboxes2[0]
+                yofzeroeddownbox1 = zeroeddownbox1[1]
+                keydiff1 = abs(yofzeroeddownbox1 - keyyaxis)
+
+                zeroeddownbox2 = xalignedboxes2[1]
+                yofzeroeddownbox2 = zeroeddownbox2[1]
+                keydiff2 = abs(yofzeroeddownbox2 - keyyaxis)
+
+                zeroeddownbox3 = xalignedboxes2[2]
+                yofzeroeddownbox3 = zeroeddownbox3[1]
+                keydiff3 = abs(yofzeroeddownbox3 - keyyaxis)
+
+
+                if (keydiff1 < keydiff2):
+                    if (keydiff1 < keydiff3):
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[0]
+                        print(zeroeddownbox)
+                    else:
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[2]
+                        print(zeroeddownbox)
+                elif (keydiff1 > keydiff2):
+                    if (keydiff2 < keydiff3):
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[1]
+                        print(zeroeddownbox)
+                    else:
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[2]
+                        print(zeroeddownbox)
+                    # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                    # zeroeddownbox = xalignedboxes2[1]
+                    # print(zeroeddownbox)
+
+
+                txtStartX = zeroeddownbox[0]
+                txtStartY = zeroeddownbox[1]
+
+                cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
+                # cropped_image.show()
+
+                # result_text = invoketesseract(cropped_image)
+                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                # sendresponse(result_text, 200)
+                print(result_text)
+                return (result_text)
+
+            elif kposition == 'top':
+                boxes.sort(key=lambda a: a[1])
+                print("sorted boxes:")
+                print(boxes)
+                # print(sortedbox)
+                index = boxes.index(keybox)
+                print(index)
+
+                # getting boxes above key value box
+                boxesabovekey = boxes[0:(index)]
+                print("boxes above key - " + str(boxesabovekey))
+
+                yfiltered = []
+
+                ypercentage = 2
+                yvision = originalimagesizeheight / 100
+                yvision = yvision * ypercentage
+                print("vision - " + str(yvision))
+
+                for textbox in boxesabovekey:
+                    txtyaxis = int(textbox[1])
+                    diff = abs(txtyaxis - keyyaxis)
+                    if (diff > yvision):
+                        yfiltered.append(textbox)
+
+                print("y-aligned boxes - " + str(yfiltered))
+
+                # get all the boxes that are aligned to x axis of the key box
+                xalignedboxes = []
+
+                percentage = float(koriper)
+                vision = originalimagesizewidth / 100
+                vision = vision * percentage
+                print("vision - " + str(vision))
+
+                for textbox in yfiltered:
+                    startx = int(textbox[0])
+                    diff = abs(startx - keyxaxis)
+
+                    if (diff <= vision):
+                        xalignedboxes.append(textbox)
+                print("x-aligned boxes - " + str(xalignedboxes))
+
+                xalignedboxes2 = []
+
+                for textbox in xalignedboxes:
+                    startx1 = int(textbox[0])
+                    if (kori == "left"):
+                        if (startx1 < keyxaxis):
+                            xalignedboxes2.append(textbox)
+                    if (kori == "right"):
+                        if (startx1 > keyxaxis):
+                            xalignedboxes2.append(textbox)
+                    if (kori == "immediate"):
+                        xalignedboxes2.append(textbox)
+
+                # sort the x aligned boxed in ascending oreder of y axis
+                xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
+                print(xalignedboxes2)
+
+                # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
+                xalignedboxes2 = xalignedboxes2[:3]
+
+                # sort again based on x axis
+                xalignedboxes2.sort(key=lambda y: y[0])
+                print(xalignedboxes2)
+
+                zeroeddownbox1 = xalignedboxes2[0]
+                yofzeroeddownbox1 = zeroeddownbox1[1]
+                keydiff1 = abs(yofzeroeddownbox1 - keyyaxis)
+
+                zeroeddownbox2 = xalignedboxes2[1]
+                yofzeroeddownbox2 = zeroeddownbox2[1]
+                keydiff2 = abs(yofzeroeddownbox2 - keyyaxis)
+
+                zeroeddownbox3 = xalignedboxes2[2]
+                yofzeroeddownbox3 = zeroeddownbox3[1]
+                keydiff3 = abs(yofzeroeddownbox3 - keyyaxis)
+
+                if (keydiff1 < keydiff2):
+                    if (keydiff1 < keydiff3):
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[0]
+                        print(zeroeddownbox)
+                    else:
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[2]
+                        print(zeroeddownbox)
+                elif (keydiff1 > keydiff2):
+                    if (keydiff2 < keydiff3):
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[1]
+                        print(zeroeddownbox)
+                    else:
+                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                        zeroeddownbox = xalignedboxes2[2]
+                        print(zeroeddownbox)
+                    # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                    # zeroeddownbox = xalignedboxes2[1]
+                    # print(zeroeddownbox)
+
+                txtStartX = zeroeddownbox[0]
+                txtStartY = zeroeddownbox[1]
+
+                cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
+                cropped_image.show()
+
+                # result_text = invoketesseract(cropped_image)
+                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                # sendresponse(result_text, 200)
+                print(result_text)
+                return (result_text)
+
+            elif kposition == 'right':
+                boxes.sort(key=lambda lis: lis[0])
+                index = boxes.index(keybox)
+                value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] + 0.05 * originalimagesizewidth,
+                                                                 boxes[index][3] + 0.05 * originalimagesizewidth) or
+                                            boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
+                                                                 boxes[index][
+                                                                     1] + 0.05 * originalimagesizeheight) else
+                                boxes[index + 1] for i in range(index + 1, len(boxes))], key=lambda x: x[0])
+                [startX, startY, endX, endY] = value[0]
+                cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+                                          startY + originaltextheight)
+                result_text = invoketesseract(cropped_image)
+                # sendresponse(result_text, 200)
+                print(result_text)
+                return (result_text)
+
+            elif kposition == 'left':
+                boxes.sort(key=lambda lis: lis[0])
+                index = boxes.index(keybox)
+                value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] - 0.05 * originalimagesizewidth,
+                                                                 boxes[index][3] - 0.05 * originalimagesizewidth) or
+                                            boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
+                                                                 boxes[index][
+                                                                     1] + 0.05 * originalimagesizeheight) else
+                                boxes[index - 1] for i in range(0, index)], key=lambda x: x[0])
+                [startX, startY, endX, endY] = value[0]
+                cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
+                                          startY + originaltextheight)
+                result_text = invoketesseract(cropped_image)
+                # sendresponse(result_text, 200)
+                print(result_text)
+                return (result_text)
+
+            else:
+                sendresponse("cannot find value for this key", 201)
+        else:
+            sendresponse("cannot find value for this key", 201)
+
+
+
+
+@app.errorhandler(400)
+def bad_request(error=None):
+    message = {
+        'status': 400,
+        'message': 'Bad Request: ' + request.url + '--> Please check your data payload...'
+    }
+    resp = jsonify(message)
+    resp.status_code = 400
+
+    return resp
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', debug=True, port=3000, threaded=True)
+
+
+
+

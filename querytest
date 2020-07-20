@@ -1,0 +1,15 @@
+
+modelname = "abc"
+
+leftindex = "abc"
+liposition = "abc"
+litol = "abc"
+kori = "abc"
+koriper = "abc"
+
+
+
+query = 'INSERT INTO eyesight.dbo.' + modelname + '(leftindex, liposition, litol, kori, koriper) VALUES ('+ '\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',' + koriper + ');'
+
+
+print (query)
