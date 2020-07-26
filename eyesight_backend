@@ -35,6 +35,8 @@ local_save_input_file = 'reconstructed.jpg'
 global local_save_input_test_file
 local_save_cropped_file = 'croppedpic.jpg'
 
+
+
 headerfound = 0
 leftindexfound = 0
 
@@ -89,7 +91,7 @@ def createmodel():
                                               "isthre varchar(255), colorcut varchar(255), threshold varchar(255), textnature " \
                                               "varchar(255), language varchar(255), iskey varchar(255), " \
                                               "kposition varchar(255), ktol varchar(255), keyval varchar(255), " \
-                                              "leftindex varchar(255), liposition varchar(255), litol varchar(255), kori varchar(255), koriper varchar(255)); "
+                                              "leftindex varchar(255), liposition varchar(255), litol varchar(255), kori varchar(255), koriper varchar(255), regex varchar(255)); "
         print (query)
         cursor.execute(query)
         conn.commit()
@@ -161,6 +163,7 @@ def trainmodel():
                 litol = indi["litol"]
                 kori = indi["kori"]
                 koriper = indi["koriper"]
+                regex = indi["regex"]
 
                 if "'" in keyval:
                     keyval = keyval.replace("'", "")
@@ -184,7 +187,7 @@ def trainmodel():
                                                                   'fullwidth, fullheight, label, text, header, hposition,' \
                                                                   'htol, footer, fposition, ftol, isthre, colorcut, ' \
                                                                   'threshold, textnature, language, iskey, kposition, ' \
-                                                                  'ktol, keyval, leftindex, liposition, litol, kori, koriper) VALUES (' + xaxisl + ',' + yaxisl + ',' + widthl + ',' + heightl + ',' + rotatel + ', \'' + keywidth + ' \', \'' + keyheight + ' \', ' + fullwidthl + ',' + fullheightl + ', \'' + labell + '\' , \'' + textl + '\'' + ',\'' + headerl + '\',\'' + hpositionl + '\',\'' + htoll + '\',\'' + footerl + '\',\'' + fpositionl + '\',\'' + ftoll + '\',\'' + isthre + '\',\'' + colorcut + '\',\'' + threshold + '\',\'' + textnature + '\',\'' + language + '\',\'' + iskey + '\',\'' + kposition + '\',\'' + ktol + '\',\'' + keyval + '\',\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',\'' + koriper + '\'' + ');'
+                                                                  'ktol, keyval, leftindex, liposition, litol, kori, koriper, regex) VALUES (' + xaxisl + ',' + yaxisl + ',' + widthl + ',' + heightl + ',' + rotatel + ', \'' + keywidth + ' \', \'' + keyheight + ' \', ' + fullwidthl + ',' + fullheightl + ', \'' + labell + '\' , \'' + textl + '\'' + ',\'' + headerl + '\',\'' + hpositionl + '\',\'' + htoll + '\',\'' + footerl + '\',\'' + fpositionl + '\',\'' + ftoll + '\',\'' + isthre + '\',\'' + colorcut + '\',\'' + threshold + '\',\'' + textnature + '\',\'' + language + '\',\'' + iskey + '\',\'' + kposition + '\',\'' + ktol + '\',\'' + keyval + '\',\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',\'' + koriper + '\',\'' + regex + '\'' + ');'
 
                 print(query)
                 cursor.execute(query)
@@ -343,6 +346,12 @@ def receiveimage():
                 else:
                     print(e)
 
+            # Removing horizontal and verical lines
+            linesremoved = removelines(local_save_input_test_file)
+            if (linesremoved == "done"):
+                print("lines removed")
+            elif (linesremoved == "failed"):
+                print("failed to remove lines")
 
             # 3rd step - crop area of image before header, after footer and to the left of left index
             cleanedimage = crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut)
@@ -671,102 +680,171 @@ def invoketesseract(croppedimage):
 
 # call this method to get the list of all bounding boxes around texts in the image in list of lists format
 def gettextboxes(local_save_input_test_file, fullwidth, fullheight):
-    image = cv2.imread(local_save_input_test_file)
-    height, width, channels = image.shape
+    # Load the image
+    img = cv2.imread(local_save_input_test_file)
 
-    if (fullwidth == 0) & (fullheight == 0):
-        fullwidth = width
-        fullheight = height
+    # convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    orig = image.copy()
-    (H, W) = image.shape[:2]
+    # smooth the image to avoid noises
+    gray = cv2.medianBlur(gray, 5)
 
-    (newW, newH) = (640, 640)
-    rW = W / float(newW)
-    rH = H / float(newH)
+    # Apply adaptive threshold
+    thresh = cv2.adaptiveThreshold(gray, 255, 1, 1, 11, 2)
+    thresh_color = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
 
-    image = cv2.resize(image, (newW, newH))
-    (H, W) = image.shape[:2]
+    # apply some dilation and erosion to join the gaps - change iteration to detect more or less area's
+    thresh = cv2.dilate(thresh, None, iterations=5)
+    thresh = cv2.erode(thresh, None, iterations=5)
 
-    layerNames = [
-        "feature_fusion/Conv_7/Sigmoid",
-        "feature_fusion/concat_3"]
+    # Find the contours
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    print("[INFO] loading EAST text detector...")
+    # size of the image
+    dimensions = img.shape
+    height = img.shape[0]
+    width = img.shape[1]
 
-    net = cv2.dnn.readNet("frozen_east_text_detection.pb")
-    blob = cv2.dnn.blobFromImage(image, 1.0, (W, H),
-                                 (123.68, 116.78, 103.94), swapRB=True, crop=False)
-    net.setInput(blob)
-    (scores, geometry) = net.forward(layerNames)
+    percentage = .5
+    xthreshold = percentage * (width / 100)
+    ythreshold = percentage * (height / 100)
 
-    (numRows, numCols) = scores.shape[2:4]
-    rects = []
-    confidences = []
+    # For each contour, find the bounding rectangle and draw it
+    boxes = []
+    for cnt in contours:
+        xypadding = 5
+        hwpadding = 10
+        x, y, w, h = cv2.boundingRect(cnt)
+        if (w > xthreshold):
+            if (h > ythreshold):
+                x = x - xypadding
+                y = y - xypadding
+                w = w + hwpadding
+                h = h + hwpadding
+                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.rectangle(thresh_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                box = [x, y, x + w, y + h]
+                boxes.append(box)
 
-    textboxesxxx = []
-
-    for y in range(0, numRows):
-        scoresData = scores[0, 0, y]
-        xData0 = geometry[0, 0, y]
-        xData1 = geometry[0, 1, y]
-        xData2 = geometry[0, 2, y]
-        xData3 = geometry[0, 3, y]
-        anglesData = geometry[0, 4, y]
-
-        for x in range(0, numCols):
-            if scoresData[x] < 0.05:
-                continue
-
-            (offsetX, offsetY) = (x * 4.0, y * 4.0)
-
-            angle = anglesData[x]
-            cos = np.cos(angle)
-            sin = np.sin(angle)
-
-            h = xData0[x] + xData2[x]
-            w = xData1[x] + xData3[x]
-
-            # extend the bounding box to 2% of total width and height
-            # widthextension = (fullwidth / 100) * 2
-            # heightextension = (fullheight / 100) * 2
-
-            widthextension = 10
-            heightextension = 10
-
-            endX = (int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))) + widthextension
-            endY = (int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))) + heightextension
-            startX = (int(endX - w)) - widthextension
-            startY = (int(endY - h)) - heightextension
-
-            if (startX < 0):
-                startX = 0
-            if (startY < 0):
-                startY = 0
-
-            # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
-
-            rects.append((startX, startY, endX, endY))
-            confidences.append(scoresData[x])
-
-    boxes = non_max_suppression(np.array(rects), probs=confidences)
-
-    for (startX, startY, endX, endY) in boxes:
-        startX = int(startX * rW)
-        startY = int(startY * rH)
-        endX = int(endX * rW)
-        endY = int(endY * rH)
-
-        # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
-        cv2.rectangle(orig, (startX, startY), (endX, endY), (0, 255, 0), 2)
-
-        textboxx = [startX, startY, endX, endY]
-        textboxesxxx.append(textboxx)
-
-    # cv2.imshow("Text Detection", orig)
+    # Finally show the image
+    print(boxes)
+    # cv2.imshow('img', img)
+    # orig = Image.fromarray(img)
+    # orig.save("C:/Users/ET437GL/Pictures/Eyesight sample images/passportsamples/10.jpg")
+    # cv2.imshow('res', thresh_color)
     # cv2.waitKey(0)
-    # print(textboxesxxx)
-    return textboxesxxx
+    # cv2.destroyAllWindows()
+    return boxes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # image = cv2.imread(local_save_input_test_file)
+    # height, width, channels = image.shape
+    #
+    # if (fullwidth == 0) & (fullheight == 0):
+    #     fullwidth = width
+    #     fullheight = height
+    #
+    # orig = image.copy()
+    # (H, W) = image.shape[:2]
+    #
+    # (newW, newH) = (640, 640)
+    # rW = W / float(newW)
+    # rH = H / float(newH)
+    #
+    # image = cv2.resize(image, (newW, newH))
+    # (H, W) = image.shape[:2]
+    #
+    # layerNames = [
+    #     "feature_fusion/Conv_7/Sigmoid",
+    #     "feature_fusion/concat_3"]
+    #
+    # print("[INFO] loading EAST text detector...")
+    #
+    # net = cv2.dnn.readNet("frozen_east_text_detection.pb")
+    # blob = cv2.dnn.blobFromImage(image, 1.0, (W, H),
+    #                              (123.68, 116.78, 103.94), swapRB=True, crop=False)
+    # net.setInput(blob)
+    # (scores, geometry) = net.forward(layerNames)
+    #
+    # (numRows, numCols) = scores.shape[2:4]
+    # rects = []
+    # confidences = []
+    #
+    # textboxesxxx = []
+    #
+    # for y in range(0, numRows):
+    #     scoresData = scores[0, 0, y]
+    #     xData0 = geometry[0, 0, y]
+    #     xData1 = geometry[0, 1, y]
+    #     xData2 = geometry[0, 2, y]
+    #     xData3 = geometry[0, 3, y]
+    #     anglesData = geometry[0, 4, y]
+    #
+    #     for x in range(0, numCols):
+    #         if scoresData[x] < 0.05:
+    #             continue
+    #
+    #         (offsetX, offsetY) = (x * 4.0, y * 4.0)
+    #
+    #         angle = anglesData[x]
+    #         cos = np.cos(angle)
+    #         sin = np.sin(angle)
+    #
+    #         h = xData0[x] + xData2[x]
+    #         w = xData1[x] + xData3[x]
+    #
+    #         # extend the bounding box to 2% of total width and height
+    #         # widthextension = (fullwidth / 100) * 2
+    #         # heightextension = (fullheight / 100) * 2
+    #
+    #         widthextension = 10
+    #         heightextension = 10
+    #
+    #         endX = (int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))) + widthextension
+    #         endY = (int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))) + heightextension
+    #         startX = (int(endX - w)) - widthextension
+    #         startY = (int(endY - h)) - heightextension
+    #
+    #         if (startX < 0):
+    #             startX = 0
+    #         if (startY < 0):
+    #             startY = 0
+    #
+    #         # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
+    #
+    #         rects.append((startX, startY, endX, endY))
+    #         confidences.append(scoresData[x])
+    #
+    # boxes = non_max_suppression(np.array(rects), probs=confidences)
+    #
+    # for (startX, startY, endX, endY) in boxes:
+    #     startX = int(startX * rW)
+    #     startY = int(startY * rH)
+    #     endX = int(endX * rW)
+    #     endY = int(endY * rH)
+    #
+    #     # print(str(startX) + " " + str(startY) + " " + str(endX) + " " + str(endY))
+    #     cv2.rectangle(orig, (startX, startY), (endX, endY), (0, 255, 0), 2)
+    #
+    #     textboxx = [startX, startY, endX, endY]
+    #     textboxesxxx.append(textboxx)
+    #
+    # # cv2.imshow("Text Detection", orig)
+    # # cv2.waitKey(0)
+    # # print(textboxesxxx)
+    # return textboxesxxx
 
 
 # call this method and pass model name to get the dimensions of train image of a model
@@ -1334,6 +1412,8 @@ def initialimageprocess():
             img_data = data['thumbnail']
             threshold = int(data['threshold'])
             colorcut = int(data['colorcut'])
+            erode = int(data['erode'])
+            dilate = int(data['dilate'])
             corrstring = img_data + "=="
             # corrstring = re.sub(r'.*,', ',', corrstring)
             # corrstring = corrstring.replace(",", "")
@@ -1344,6 +1424,83 @@ def initialimageprocess():
             final = enhancecroppedpicruntime(threshold, colorcut, cv2_img)
             # print (type(final))
             # final.show()
+
+            try:
+                timestamp = time.time()
+                timestamp = str(timestamp).split('.')
+                timestamp = str(timestamp[0])
+                print(timestamp)
+                local_save_input_initial_file = 'initialimage' + timestamp + '.jpg'
+                final.save(local_save_input_initial_file)
+                final = removelines2(local_save_input_initial_file)
+            except Exception as e:
+                pass
+
+            try:
+                # # Load the image
+                # img = cv2.imread('C:/Users/ET437GL/Documents/EYESIGHT/richa/images/newtel1.jpg')
+
+                # convert to grayscale
+                final = np.array(final)
+                gray = cv2.cvtColor(final, cv2.COLOR_BGR2GRAY)
+
+                # smooth the image to avoid noises
+                gray = cv2.medianBlur(gray, 5)
+
+                # Apply adaptive threshold
+                thresh = cv2.adaptiveThreshold(gray, 255, 1, 1, 11, 2)
+                thresh_color = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+
+                # apply some dilation and erosion to join the gaps - change iteration to detect more or less area's
+                thresh = cv2.dilate(thresh, None, iterations=dilate)
+                thresh = cv2.erode(thresh, None, iterations=erode)
+
+                # Find the contours
+                contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+                # size of the image
+                dimensions = img.shape
+                height = img.shape[0]
+                width = img.shape[1]
+
+                percentage = 0.5
+                xthreshold = percentage * (width / 100)
+                ythreshold = percentage * (height / 100)
+
+                # For each contour, find the bounding rectangle and draw it
+                boxes = []
+                for cnt in contours:
+
+                    xypadding = 5
+                    hwpadding = 10
+                    x, y, w, h = cv2.boundingRect(cnt)
+
+                    if (w > xthreshold):
+                        if (h > ythreshold):
+                            x = x - xypadding
+                            y = y - xypadding
+                            w = w + hwpadding
+                            h = h + hwpadding
+                            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.rectangle(thresh_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            box = [x, y, x + w, y + h]
+                            boxes.append(box)
+
+                # Finally show the image
+                print(boxes)
+                # cv2.imshow('img', img)
+                orig = Image.fromarray(img)
+                final = orig
+                # orig.save("C:/Users/ET437GL/Documents/EYESIGHT/richa/images/newtel 2.png")
+                # cv2.imshow('res',thresh_color)
+                # cv2.waitKey(0)
+                # cv2.destroyAllWindows()
+            except Exception as e:
+                print (e)
+                pass
+
+
+
             final = np.array(final)
             string = base64.b64encode(cv2.imencode('.jpg', final)[1]).decode()
             message = {"status": 200, "imagestring": string}
@@ -1794,20 +1951,244 @@ def keybased(model, local_save_input_test_file):
                 boxesabovekey = boxes[0:(index)]
                 print("boxes above key - " + str(boxesabovekey))
 
-                yfiltered = []
 
-                ypercentage = 2
-                yvision = originalimagesizeheight / 100
-                yvision = yvision * ypercentage
-                print("vision - " + str(yvision))
-
+                # writing new logic
+                koriperyboxes = []
+                percentage = float(koriper)
+                vision = originalimagesizeheight / 100
+                vision = vision * percentage
+                print("vision for koriperyboxes - " + str(vision))
                 for textbox in boxesabovekey:
-                    txtyaxis = int(textbox[1])
-                    diff = abs(txtyaxis - keyyaxis)
-                    if (diff > yvision):
-                        yfiltered.append(textbox)
+                    starty = int(textbox[1])
+                    diff = abs(starty - keyyaxis)
+                    if (diff <= vision):
+                        koriperyboxes.append(textbox)
+                print("key orientation Y boxes - " + str(koriperyboxes))
 
-                print("y-aligned boxes - " + str(yfiltered))
+
+
+
+                koriperxboxes = []
+                percentage = float(koriper)
+                vision = originalimagesizewidth / 100
+                vision = vision * percentage
+                print("vision for koriperxboxes - " + str(vision))
+                for textbox in koriperyboxes:
+                    startx = int(textbox[0])
+                    diff = abs(startx - keyxaxis)
+                    if (diff <= vision):
+                        koriperxboxes.append(textbox)
+                print("key orientation X boxes - " + str(koriperxboxes))
+
+
+
+
+
+                # sort the x aligned boxed in ascending oreder of y axis
+                koriperxboxes.sort(key=lambda y: y[1], reverse=True)
+                print("Descending order sorted boxes - " + str(koriperxboxes))
+
+                # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
+                if (len(koriperxboxes) > 2):
+                    koriperxboxes = koriperxboxes[:3]
+
+                xdifferences = []
+                for boxes in koriperxboxes:
+                    xvalue = boxes[0]
+                    diff = abs(xvalue - keyxaxis)
+                    xdifferences.append(diff)
+
+                finalindex = xdifferences.index(min(xdifferences))
+                finalbox = koriperxboxes[finalindex]
+
+                txtStartX = finalbox[0]
+                txtStartY = finalbox[1]
+
+                cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
+                cropped_image.show()
+
+                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                # sendresponse(result_text, 200)
+                print("output - " + result_text)
+                return (result_text)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                # yfiltered = []
+                #
+                # ypercentage = 2
+                # yvision = originalimagesizeheight / 100
+                # yvision = yvision * ypercentage
+                # print("vision - " + str(yvision))
+                #
+                # for textbox in boxesabovekey:
+                #     txtyaxis = int(textbox[1])
+                #     diff = abs(txtyaxis - keyyaxis)
+                #     if (diff > yvision):
+                #         yfiltered.append(textbox)
+                #
+                # print("y-aligned boxes - " + str(yfiltered))
+                #
+                # # get all the boxes that are aligned to x axis of the key box
+                # xalignedboxes = []
+                #
+                # percentage = float(koriper)
+                # vision = originalimagesizewidth / 100
+                # vision = vision * percentage
+                # print("vision - " + str(vision))
+                #
+                # for textbox in yfiltered:
+                #     startx = int(textbox[0])
+                #     diff = abs(startx - keyxaxis)
+                #
+                #     if (diff <= vision):
+                #         xalignedboxes.append(textbox)
+                # print("x-aligned boxes - " + str(xalignedboxes))
+                #
+                # xalignedboxes2 = []
+                #
+                # for textbox in xalignedboxes:
+                #     startx1 = int(textbox[0])
+                #     if (kori == "left"):
+                #         if (startx1 < keyxaxis):
+                #             xalignedboxes2.append(textbox)
+                #     if (kori == "right"):
+                #         if (startx1 > keyxaxis):
+                #             xalignedboxes2.append(textbox)
+                #     if (kori == "immediate"):
+                #         xalignedboxes2.append(textbox)
+                #     if (kori == "auto"):
+                #         xalignedboxes2.append(textbox)
+                #
+                #
+                # if (kori == "auto"):
+                #
+                #     # sort the x aligned boxed in ascending oreder of y axis
+                #     xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
+                #     print(xalignedboxes2)
+                #
+                #     # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
+                #     if (len(xalignedboxes2) > 2):
+                #         xalignedboxes2 = xalignedboxes2[:3]
+                #
+                #     xdifferences = []
+                #     for boxes in xalignedboxes2:
+                #         xvalue = boxes[0]
+                #         diff = abs(xvalue - keyxaxis)
+                #         xdifferences.append(diff)
+                #
+                #     finalindex = xdifferences.index(min(xdifferences))
+                #     finalboxesy = xalignedboxes2[finalindex]
+                #
+                #     txtStartX = finalboxesy[0]
+                #     txtStartY = finalboxesy[1]
+                #
+                #     cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
+                #     # cropped_image.show()
+                #
+                #     # result_text = invoketesseract(cropped_image)
+                #     result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                #     # sendresponse(result_text, 200)
+                #     print(result_text)
+                #     return (result_text)
+                #
+                #
+                # else:
+                #     # sort the x aligned boxed in ascending oreder of y axis
+                #     xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
+                #     print(xalignedboxes2)
+                #
+                #     # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
+                #     if (len(xalignedboxes2) > 2):
+                #         xalignedboxes2 = xalignedboxes2[:3]
+                #
+                #
+                #     ydifferences = []
+                #     for boxes in xalignedboxes2:
+                #         yvalue = boxes[1]
+                #         diff = abs(yvalue - keyyaxis)
+                #         ydifferences.append(diff)
+                #
+                #     finalindex = ydifferences.index(min(ydifferences))
+                #
+                #     finalboxes = xalignedboxes2[finalindex]
+                #
+                #     # sort again based on x axis
+                #     # xalignedboxes2.sort(key=lambda y: y[0])
+                #     # print(xalignedboxes2)
+                #
+                #     txtStartX = finalboxes[0]
+                #     txtStartY = finalboxes[1]
+                #
+                #     cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
+                #     # cropped_image.show()
+                #
+                #     # result_text = invoketesseract(cropped_image)
+                #     result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                #     # sendresponse(result_text, 200)
+                #     print(result_text)
+                #     return (result_text)
+
+            elif kposition == 'right':
+                boxes.sort(key=lambda a: a[0])
+                print("sorted boxes:")
+                print(boxes)
+                # print(sortedbox)
+                index = boxes.index(keybox)
+                print(index)
+
+                # getting boxes to the right of key value box
+                boxesabovekey = boxes[(index + 1):(len(boxes))]
+                print("boxes to the right of key - " + str(boxesabovekey))
+
+                keyrighttip = float(keyxaxis) + float(key_width)
+
+                boxestotherightofkey = []
+
+                for box in boxesabovekey:
+                    if (box[0] > keyrighttip):
+                        boxestotherightofkey.append(box)
+
+                xfiltered = []
+
+                xpercentage = 2
+                xvision = originalimagesizewidth / 100
+                xvision = xvision * xpercentage
+                print("vision - " + str(xvision))
+
+                for textbox in boxestotherightofkey:
+                    txtxaxis = int(textbox[0])
+                    diff = abs(txtxaxis - keyxaxis)
+                    if (diff > xvision):
+                        xfiltered.append(textbox)
+
+                print("x-aligned boxes - " + str(xfiltered))
 
                 # get all the boxes that are aligned to x axis of the key box
                 xalignedboxes = []
@@ -1817,13 +2198,42 @@ def keybased(model, local_save_input_test_file):
                 vision = vision * percentage
                 print("vision - " + str(vision))
 
-                for textbox in yfiltered:
-                    startx = int(textbox[0])
-                    diff = abs(startx - keyxaxis)
+                for textbox in xfiltered:
+                    starty = int(textbox[1])
+                    diff = abs(starty - int(keyyaxis))
 
                     if (diff <= vision):
                         xalignedboxes.append(textbox)
                 print("x-aligned boxes - " + str(xalignedboxes))
+
+
+
+
+
+
+
+                # # get all the boxes that are aligned to x axis of the key box
+                # xalignedboxes3 = []
+                #
+                # percentage = float(koriper)
+                # vision = originalimagesizewidth / 100
+                # vision = vision * percentage
+                # print("vision - " + str(vision))
+                #
+                # for textbox in xalignedboxes:
+                #     startx = int(textbox[0])
+                #     diff = abs(startx - (keyxaxis + int(key_width)))
+                #
+                #     if (diff <= vision):
+                #         xalignedboxes3.append(textbox)
+                # print("x-aligned boxes - " + str(xalignedboxes3))
+
+
+
+
+
+
+
 
                 xalignedboxes2 = []
 
@@ -1837,77 +2247,108 @@ def keybased(model, local_save_input_test_file):
                             xalignedboxes2.append(textbox)
                     if (kori == "immediate"):
                         xalignedboxes2.append(textbox)
+                    if (kori == "auto"):
+                        xalignedboxes2.append(textbox)
+
+
 
                 # sort the x aligned boxed in ascending oreder of y axis
-                xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
+                xalignedboxes2.sort(key=lambda y: y[1])
                 print(xalignedboxes2)
+
+
 
                 # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
-                xalignedboxes2 = xalignedboxes2[:3]
+                if (len(xalignedboxes2) > 2):
+                    xalignedboxes2 = xalignedboxes2[:3]
 
-                # sort again based on x axis
-                xalignedboxes2.sort(key=lambda y: y[0])
-                print(xalignedboxes2)
+                # sort again based on y axis
+                # xalignedboxes2.sort(key=lambda y: y[1])
+                # print(xalignedboxes2)
 
-                zeroeddownbox1 = xalignedboxes2[0]
-                yofzeroeddownbox1 = zeroeddownbox1[1]
-                keydiff1 = abs(yofzeroeddownbox1 - keyyaxis)
 
-                zeroeddownbox2 = xalignedboxes2[1]
-                yofzeroeddownbox2 = zeroeddownbox2[1]
-                keydiff2 = abs(yofzeroeddownbox2 - keyyaxis)
+                ydifferences = []
+                for boxes in xalignedboxes2:
+                    yvalue = boxes[1]
+                    diff = abs(yvalue - keyyaxis)
+                    ydifferences.append(diff)
 
-                zeroeddownbox3 = xalignedboxes2[2]
-                yofzeroeddownbox3 = zeroeddownbox3[1]
-                keydiff3 = abs(yofzeroeddownbox3 - keyyaxis)
+                finalindex = ydifferences.index(min(ydifferences))
 
-                if (keydiff1 < keydiff2):
-                    if (keydiff1 < keydiff3):
-                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
-                        zeroeddownbox = xalignedboxes2[0]
-                        print(zeroeddownbox)
-                    else:
-                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
-                        zeroeddownbox = xalignedboxes2[2]
-                        print(zeroeddownbox)
-                elif (keydiff1 > keydiff2):
-                    if (keydiff2 < keydiff3):
-                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
-                        zeroeddownbox = xalignedboxes2[1]
-                        print(zeroeddownbox)
-                    else:
-                        # get the first box in x aligned boxes, which will be the immediate below box to the key box
-                        zeroeddownbox = xalignedboxes2[2]
-                        print(zeroeddownbox)
+                finalboxes = xalignedboxes2[finalindex]
+
+                # try:
+                #     zeroeddownbox1 = xalignedboxes2[0]
+                #     yofzeroeddownbox1 = zeroeddownbox1[1]
+                #     keydiff1 = abs(yofzeroeddownbox1 - keyyaxis)
+                #
+                #     zeroeddownbox2 = xalignedboxes2[1]
+                #     yofzeroeddownbox2 = zeroeddownbox2[1]
+                #     keydiff2 = abs(yofzeroeddownbox2 - keyyaxis)
+                #
+                #     zeroeddownbox3 = xalignedboxes2[2]
+                #     yofzeroeddownbox3 = zeroeddownbox3[1]
+                #     keydiff3 = abs(yofzeroeddownbox3 - keyyaxis)
+                # except Exception as e:
+                #     print("Error: " + e)
+                #
+                # if (keydiff1 < keydiff2):
+                #     if (keydiff1 < keydiff3):
+                #         # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                #         zeroeddownbox = xalignedboxes2[0]
+                #         print(zeroeddownbox)
+                #     else:
+                #         # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                #         zeroeddownbox = xalignedboxes2[2]
+                #         print(zeroeddownbox)
+                # elif (keydiff1 > keydiff2):
+                #     if (keydiff2 < keydiff3):
+                #         # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                #         zeroeddownbox = xalignedboxes2[1]
+                #         print(zeroeddownbox)
+                #     else:
+                #         # get the first box in x aligned boxes, which will be the immediate below box to the key box
+                #         zeroeddownbox = xalignedboxes2[2]
+                #         print(zeroeddownbox)
+                #
+                #
+                #
+                #
+                #
+                # finalboxes = []
+                #
+                # fpercentage = 5
+                # fvision = originalimagesizewidth / 100
+                # fvision = fvision * fpercentage
+                # print("fvision - " + str(fvision))
+                #
+                # for textbox in xalignedboxes2:
+                #     starty = int(textbox[1])
+                #     diff = abs(starty - keyyaxis)
+                #
+                #     if (diff <= fvision):
+                #         finalboxes.append(textbox)
+                print("final box - " + str(finalboxes))
+
+
+
+
+
+
                     # get the first box in x aligned boxes, which will be the immediate below box to the key box
                     # zeroeddownbox = xalignedboxes2[1]
                     # print(zeroeddownbox)
+
+                zeroeddownbox = finalboxes
 
                 txtStartX = zeroeddownbox[0]
                 txtStartY = zeroeddownbox[1]
 
                 cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
-                cropped_image.show()
+                # cropped_image.show()
 
                 # result_text = invoketesseract(cropped_image)
                 result_text = pytesseract.image_to_string(cropped_image, lang='eng')
-                # sendresponse(result_text, 200)
-                print(result_text)
-                return (result_text)
-
-            elif kposition == 'right':
-                boxes.sort(key=lambda lis: lis[0])
-                index = boxes.index(keybox)
-                value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] + 0.05 * originalimagesizewidth,
-                                                                 boxes[index][3] + 0.05 * originalimagesizewidth) or
-                                            boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
-                                                                 boxes[index][
-                                                                     1] + 0.05 * originalimagesizeheight) else
-                                boxes[index + 1] for i in range(index + 1, len(boxes))], key=lambda x: x[0])
-                [startX, startY, endX, endY] = value[0]
-                cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
-                                          startY + originaltextheight)
-                result_text = invoketesseract(cropped_image)
                 # sendresponse(result_text, 200)
                 print(result_text)
                 return (result_text)
@@ -1934,6 +2375,73 @@ def keybased(model, local_save_input_test_file):
         else:
             sendresponse("cannot find value for this key", 201)
 
+
+def removelines(local_save_input_test_file):
+    try:
+        image = cv2.imread(local_save_input_test_file)
+        result = image.copy()
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+
+        # Remove horizontal lines
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+        cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        for c in cnts:
+            cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
+
+        # Remove vertical lines
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+        cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        for c in cnts:
+            cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
+
+        # cv2.imshow('thresh', thresh)
+        # cv2.imshow('result', result)
+        # cv2.imwrite('result.png', result)
+        result = Image.fromarray(result)
+        result.save(local_save_input_test_file)
+        # cv2.waitKey()
+        return "done"
+    except Exception as e:
+        return "failed"
+
+
+def removelines2(local_save_input_initial_file):
+    try:
+        image = cv2.imread(local_save_input_initial_file)
+        result = image.copy()
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+
+        # Remove horizontal lines
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+        cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        for c in cnts:
+            cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
+
+        # Remove vertical lines
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+        cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+        for c in cnts:
+            cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
+
+        # cv2.imshow('thresh', thresh)
+        # cv2.imshow('result', result)
+        # cv2.imwrite('result.png', result)
+        result = Image.fromarray(result)
+        # result.save(local_save_input_initial_file)
+        # cv2.waitKey()
+        return result
+    except Exception as e:
+        return "failed"
 
 
 
