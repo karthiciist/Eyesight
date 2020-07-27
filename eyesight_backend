@@ -213,6 +213,10 @@ def updatemodelstable():
         leftindex = request.headers["leftindex"]
         defthre = request.headers["defthre"]
         defcolcut = request.headers["defcolcut"]
+
+        defdilate = request.headers["defdilate"]
+        deferode = request.headers["deferode"]
+
         defeyerangex = request.headers["defeyerangex"]
         defeyerangey = request.headers["defeyerangey"]
 
@@ -227,8 +231,8 @@ def updatemodelstable():
         cursor = conn.cursor()
         modelquery = 'INSERT INTO eyesight.dbo.' + 'models' + '(model, ocr, fullheight, fullwidth, noofparam, header, footer, ' \
                                                               'leftindex, defthre, defcolcut, defeyerangex, ' \
-                                                              'defeyerangey, apiexposed, apikey, apiurl) VALUES (' + \
-                     ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\'' + '); '
+                                                              'defeyerangey, apiexposed, apikey, apiurl, defdilate, deferode) VALUES (' + \
+                     ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\',\'' + defdilate + '\',\'' + deferode + '\'' + '); '
 
         print(modelquery)
         cursor.execute(modelquery)
@@ -322,6 +326,9 @@ def receiveimage():
             originaleyerangex = int (modeldetails[10])
             originaleyerangey = int (modeldetails[11])
 
+            originaldilate = int (modeldetails[15])
+            originalerode = int (modeldetails[16])
+
 
             # fixing threshold and colorcut
             try:
@@ -354,12 +361,12 @@ def receiveimage():
                 print("failed to remove lines")
 
             # 3rd step - crop area of image before header, after footer and to the left of left index
-            cleanedimage = crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut)
+            cleanedimage = crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut, originaldilate, originalerode)
             print (cleanedimage)
 
 
             # 3rd step - draw bounding boxes and get metadata of all boxes
-            textboxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+            textboxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight, originaldilate, originalerode)
             print("--------------")
             print (textboxes)
             print("--------------")
@@ -376,9 +383,9 @@ def receiveimage():
                     # false = "true"
                     # if false == "false":
                     if parameter[23] == 'true':
-                        foundtxtfromkey = keybased(parameter, local_save_input_test_file)
+                        foundtxtfromkey = keybased(parameter, local_save_input_test_file, originaldilate, originalerode)
                         if (foundtxtfromkey == ""):
-                            foundtxtfromkey == " "
+                            foundtxtfromkey == "-"
                         finaltext.append(foundtxtfromkey)
                     else :
                         xaxis = int(parameter[1]) + leftindexfound
@@ -441,11 +448,11 @@ def receiveimage():
                             textfound = textfound.replace("\"", "")
                             print(textfound)
                             if (textfound == ""):
-                                textfound == " "
+                                textfound == "-"
                             finaltext.append(textfound)
                         else:
                             if (textfound == ""):
-                                textfound == " "
+                                textfound == "-"
                             finaltext.append(textfound)
 
             return sendresponse(str(finaltext), 200)
@@ -679,7 +686,7 @@ def invoketesseract(croppedimage):
 
 
 # call this method to get the list of all bounding boxes around texts in the image in list of lists format
-def gettextboxes(local_save_input_test_file, fullwidth, fullheight):
+def gettextboxes(local_save_input_test_file, fullwidth, fullheight, originaldilate, originalerode):
     # Load the image
     img = cv2.imread(local_save_input_test_file)
 
@@ -694,8 +701,8 @@ def gettextboxes(local_save_input_test_file, fullwidth, fullheight):
     thresh_color = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
 
     # apply some dilation and erosion to join the gaps - change iteration to detect more or less area's
-    thresh = cv2.dilate(thresh, None, iterations=5)
-    thresh = cv2.erode(thresh, None, iterations=5)
+    thresh = cv2.dilate(thresh, None, iterations=originaldilate)
+    thresh = cv2.erode(thresh, None, iterations=originalerode)
 
     # Find the contours
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -1154,7 +1161,7 @@ def login():
 
 # call this method to crop header, footer and left index
 @app.route('/crophfl', methods = ['GET', 'POST'])
-def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut):
+def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, originalimagesizeheight, originalthreshold, originalcolorcut, originaldilate, originalerode):
     global headerfound
     global leftindexfound
 
@@ -1163,7 +1170,7 @@ def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, 
         inputimage = Image.fromarray(inputimage)
         # processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
         # processedimage.save(local_save_input_test_file)
-        boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+        boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight, originaldilate, originalerode)
         boxes.sort(key=lambda lis: lis[1])
         print ("Ascending sorted:")
         print (boxes)
@@ -1228,7 +1235,7 @@ def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, 
                 inputimage = Image.fromarray(inputimage)
                 processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
                 processedimage.save(local_save_input_test_file)
-                boxes = gettextboxes(local_save_input_test_file, 0, 0)
+                boxes = gettextboxes(local_save_input_test_file, 0, 0, originaldilate, originalerode)
                 boxes.sort(key=lambda lis: lis[1], reverse=True)
                 print("Descending sorted:")
                 print(boxes)
@@ -1273,7 +1280,7 @@ def crophfl(local_save_input_test_file, modelsmetadata, originalimagesizewidth, 
                 inputimage = Image.fromarray(inputimage)
                 processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
                 processedimage.save(local_save_input_test_file)
-                boxes = gettextboxes(local_save_input_test_file, 0, 0)
+                boxes = gettextboxes(local_save_input_test_file, 0, 0, originaldilate, originalerode)
                 boxes.sort(key=lambda lis: lis[0])
                 print("X Ascending sorted:")
                 print(boxes)
@@ -1415,6 +1422,12 @@ def initialimageprocess():
             erode = int(data['erode'])
             dilate = int(data['dilate'])
             corrstring = img_data + "=="
+
+            timestamp = time.time()
+            timestamp = str(timestamp).split('.')
+            timestamp = str(timestamp[0])
+            print(timestamp)
+
             # corrstring = re.sub(r'.*,', ',', corrstring)
             # corrstring = corrstring.replace(",", "")
 
@@ -1425,15 +1438,23 @@ def initialimageprocess():
             # print (type(final))
             # final.show()
 
+            local_save_input_initial_file = 'initialimage' + timestamp + '.jpg'
+            final.save(local_save_input_initial_file)
+            withoutboxes = ""
+
+            # removing lines
             try:
-                timestamp = time.time()
-                timestamp = str(timestamp).split('.')
-                timestamp = str(timestamp[0])
-                print(timestamp)
-                local_save_input_initial_file = 'initialimage' + timestamp + '.jpg'
-                final.save(local_save_input_initial_file)
+                # timestamp = time.time()
+                # timestamp = str(timestamp).split('.')
+                # timestamp = str(timestamp[0])
+                # print(timestamp)
+                # local_save_input_initial_file = 'initialimage' + timestamp + '.jpg'
+                # final.save(local_save_input_initial_file)
                 final = removelines2(local_save_input_initial_file)
+                final.save(local_save_input_initial_file)
+                withoutboxes = final
             except Exception as e:
+                print (e)
                 pass
 
             try:
@@ -1441,6 +1462,7 @@ def initialimageprocess():
                 # img = cv2.imread('C:/Users/ET437GL/Documents/EYESIGHT/richa/images/newtel1.jpg')
 
                 # convert to grayscale
+                final = cv2.imread(local_save_input_initial_file)
                 final = np.array(final)
                 gray = cv2.cvtColor(final, cv2.COLOR_BGR2GRAY)
 
@@ -1482,14 +1504,14 @@ def initialimageprocess():
                             w = w + hwpadding
                             h = h + hwpadding
                             cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                            cv2.rectangle(thresh_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.rectangle(final, (x, y), (x + w, y + h), (0, 255, 0), 2)
                             box = [x, y, x + w, y + h]
                             boxes.append(box)
 
                 # Finally show the image
                 print(boxes)
                 # cv2.imshow('img', img)
-                orig = Image.fromarray(img)
+                orig = Image.fromarray(final)
                 final = orig
                 # orig.save("C:/Users/ET437GL/Documents/EYESIGHT/richa/images/newtel 2.png")
                 # cv2.imshow('res',thresh_color)
@@ -1502,8 +1524,10 @@ def initialimageprocess():
 
 
             final = np.array(final)
+            withoutboxes = np.array(withoutboxes)
             string = base64.b64encode(cv2.imencode('.jpg', final)[1]).decode()
-            message = {"status": 200, "imagestring": string}
+            withoutboxesstring = base64.b64encode(cv2.imencode('.jpg', withoutboxes)[1]).decode()
+            message = {"status": 200, "imagestring": withoutboxesstring, "withboxes": string}
             response = jsonify(message)
             response.status_code = 200
             return response
@@ -1784,7 +1808,7 @@ def fetchmodeldetails(model):
 #         print("No key for this parameter")
 
 
-def keybased(model, local_save_input_test_file):
+def keybased(model, local_save_input_test_file, originaldilate, originalerode):
     inputimage = cv2.imread(local_save_input_test_file)
     inputimage = Image.fromarray(inputimage)
     processedimage = enhancecroppedpicruntime("-", "-", inputimage)
@@ -1807,7 +1831,7 @@ def keybased(model, local_save_input_test_file):
     key_width = model[6]
     key_height = model[7]
 
-    boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
+    boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight, originaldilate, originalerode)
     boxes.sort(key=lambda x: x[1])
 
     for [startX, startY, endX, endY] in boxes:
@@ -1937,7 +1961,7 @@ def keybased(model, local_save_input_test_file):
                 result_text = pytesseract.image_to_string(cropped_image, lang='eng')
                 # sendresponse(result_text, 200)
                 print(result_text)
-                return (result_text)
+                # return (result_text)
 
             elif kposition == 'top':
                 boxes.sort(key=lambda a: a[1])
@@ -2010,7 +2034,7 @@ def keybased(model, local_save_input_test_file):
                 result_text = pytesseract.image_to_string(cropped_image, lang='eng')
                 # sendresponse(result_text, 200)
                 print("output - " + result_text)
-                return (result_text)
+                # return (result_text)
 
 
 
@@ -2206,12 +2230,6 @@ def keybased(model, local_save_input_test_file):
                         xalignedboxes.append(textbox)
                 print("x-aligned boxes - " + str(xalignedboxes))
 
-
-
-
-
-
-
                 # # get all the boxes that are aligned to x axis of the key box
                 # xalignedboxes3 = []
                 #
@@ -2227,13 +2245,6 @@ def keybased(model, local_save_input_test_file):
                 #     if (diff <= vision):
                 #         xalignedboxes3.append(textbox)
                 # print("x-aligned boxes - " + str(xalignedboxes3))
-
-
-
-
-
-
-
 
                 xalignedboxes2 = []
 
@@ -2330,11 +2341,6 @@ def keybased(model, local_save_input_test_file):
                 #         finalboxes.append(textbox)
                 print("final box - " + str(finalboxes))
 
-
-
-
-
-
                     # get the first box in x aligned boxes, which will be the immediate below box to the key box
                     # zeroeddownbox = xalignedboxes2[1]
                     # print(zeroeddownbox)
@@ -2351,7 +2357,9 @@ def keybased(model, local_save_input_test_file):
                 result_text = pytesseract.image_to_string(cropped_image, lang='eng')
                 # sendresponse(result_text, 200)
                 print(result_text)
-                return (result_text)
+                if (result_text == ""):
+                    result_text = "-"
+                break
 
             elif kposition == 'left':
                 boxes.sort(key=lambda lis: lis[0])
@@ -2368,12 +2376,16 @@ def keybased(model, local_save_input_test_file):
                 result_text = invoketesseract(cropped_image)
                 # sendresponse(result_text, 200)
                 print(result_text)
-                return (result_text)
+                # return (result_text)
 
             else:
-                sendresponse("cannot find value for this key", 201)
+                return "Value position missing"
+                # sendresponse("Value position is missing", 201)
         else:
-            sendresponse("cannot find value for this key", 201)
+            print("Key value is missing - " + keyval)
+            # sendresponse("cannot find value for this key", 201)
+
+    return result_text
 
 
 def removelines(local_save_input_test_file):
@@ -2384,7 +2396,7 @@ def removelines(local_save_input_test_file):
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
         # Remove horizontal lines
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 1))
         remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
         cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2392,7 +2404,7 @@ def removelines(local_save_input_test_file):
             cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
 
         # Remove vertical lines
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 80))
         remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
         cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2418,7 +2430,7 @@ def removelines2(local_save_input_initial_file):
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
         # Remove horizontal lines
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 1))
         remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
         cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2426,7 +2438,7 @@ def removelines2(local_save_input_initial_file):
             cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
 
         # Remove vertical lines
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 80))
         remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
         cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
