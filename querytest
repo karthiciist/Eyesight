@@ -9,7 +9,8 @@ koriper = "abc"
 
 
 
-query = 'INSERT INTO eyesight.dbo.' + modelname + '(leftindex, liposition, litol, kori, koriper) VALUES ('+ '\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',' + koriper + ');'
+# query = 'INSERT INTO eyesight.dbo.' + modelname + '(leftindex, liposition, litol, kori, koriper) VALUES ('+ '\'' + leftindex + '\',\'' + liposition + '\',\'' + litol + '\',\'' + kori + '\',' + koriper + ');'
 
+modelquery = 'UPDATE models SET apiexposed = ' + '\'' + apiexposed + '\'' + ', ' + 'defthre=' + ' \'' + defthre + '\'' + ', ' + 'defcolcut=' + ' \'' + defcolcut + '\'' + ', ' + 'defeyerangex=' + ' \'' + defeyerangex + '\'' + ', ' + 'defeyerangey=' + ' \'' + defeyerangey + '\'' + 'defdilate=' + ' \'' + defdilate + '\'' + 'deferode=' + ' \'' + deferode + '\'' + ' WHERE model = ' + '\'' + modelname + '\';'
 
-print (query)
+print (modelquery)

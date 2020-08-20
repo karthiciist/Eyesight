@@ -1,0 +1,39 @@
+from flask import Flask, request, render_template, session, redirect
+import numpy as np
+import pandas as pd
+import camelot
+import matplotlib.pyplot as plt
+
+
+app = Flask(__name__)
+
+
+@app.route('/', methods=("POST", "GET"))
+def html_table():
+    pd.set_option('display.max_colwidth', -1)
+
+    table_list = camelot.read_pdf('C:/Users/ET437GL/Documents/EYESIGHT/Sample inputs/richa/VRSTL_0_S900033518.pdf', flavor='stream', strip=' \n',
+                                  pages='1,2')
+
+
+    nooftables = len(table_list)
+
+    fullhtml = "<h1>Extracted Table</h1>"
+
+    for x in range(nooftables):
+        df = table_list[x].df
+        html = df.to_html()
+        fullhtml += html
+        # tabletitle = "<h1>Table " + str(x) + "</h1>"
+        if (x != (nooftables-1)):
+            tabletitle = "<h1>Extracted Table</h1>"
+            fullhtml += tabletitle
+        print (html)
+
+
+    # return render_template('simple.html',  tables=[df.to_html(classes='data')], titles=df.columns.values)
+    return fullhtml
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', debug=True, port=3000)

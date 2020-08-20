@@ -16,16 +16,23 @@ from imutils.object_detection import non_max_suppression
 from difflib import SequenceMatcher
 import time
 import os
+import camelot
+import matplotlib.pyplot as plt
+import pandas as pd
+from pdf2image import convert_from_path
+
 
 app = Flask(__name__)
 
 CORS(app)
 
-api = PyTessBaseAPI(path='C:/Users/ET437GL/Documents/tesseract/tesserocr-master/tesserocr-master/tessdata-master',
-                    lang='tam')
-imagepath = 'C:/Users/ET437GL/Documents/tesseract/noise'
-imagefile = 'C:/Users/ET437GL/Documents/tesseract/noise/testimage.jpg'
+# api = PyTessBaseAPI(path='C:/Users/ET437GL/Documents/tesseract/tesserocr-master/tesserocr-master/tessdata-master',
+#                     lang='tam')
+# imagepath = 'C:/Users/ET437GL/Documents/tesseract/noise'
+# imagefile = 'C:/Users/ET437GL/Documents/tesseract/noise/testimage.jpg'
 local_save_input_file = 'reconstructed.jpg'
+
+# workingpath = "C://"
 
 # timestamp = time.time()
 # timestamp = str(timestamp).split('.')
@@ -33,8 +40,13 @@ local_save_input_file = 'reconstructed.jpg'
 # print(timestamp)
 #
 global local_save_input_test_file
+
+global local_save_input_initial_pdf
+
 local_save_cropped_file = 'croppedpic.jpg'
 
+
+language = 'eng'
 
 
 headerfound = 0
@@ -62,7 +74,7 @@ def extracttext():
             stringToRGB(corrstring2, local_save_input_file)
 
         image1 = Image.open(local_save_input_file)
-        resultstring = tesserocr.image_to_text(image1, lang="eng")  # print ocr text from image
+        resultstring = tesserocr.image_to_text(image1, lang=language)  # print ocr text from image
         resultstring = resultstring.strip()
         print(resultstring)
         return sendresponse(resultstring, 200)
@@ -165,6 +177,10 @@ def trainmodel():
                 koriper = indi["koriper"]
                 regex = indi["regex"]
 
+                regex = regex.replace(",", "|")
+
+                print (regex)
+
                 if "'" in keyval:
                     keyval = keyval.replace("'", "")
 
@@ -224,6 +240,10 @@ def updatemodelstable():
         apikey = request.headers["apikey"]
         apiurl = request.headers["apiurl"]
 
+        headval = request.headers["headval"]
+        footval = request.headers["footval"]
+        lival = request.headers["lival"]
+
         conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
                               'Server=IN2371790W1\SQLEXPRESS;'
                               'Database=eyesight;'
@@ -231,8 +251,8 @@ def updatemodelstable():
         cursor = conn.cursor()
         modelquery = 'INSERT INTO eyesight.dbo.' + 'models' + '(model, ocr, fullheight, fullwidth, noofparam, header, footer, ' \
                                                               'leftindex, defthre, defcolcut, defeyerangex, ' \
-                                                              'defeyerangey, apiexposed, apikey, apiurl, defdilate, deferode) VALUES (' + \
-                     ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\',\'' + defdilate + '\',\'' + deferode + '\'' + '); '
+                                                              'defeyerangey, apiexposed, apikey, apiurl, defdilate, deferode, headval, footval, lival) VALUES (' + \
+                     ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\',\'' + defdilate + '\',\'' + deferode + '\',\'' + headval + '\',\'' + footval + '\',\'' + lival + '\'' + '); '
 
         print(modelquery)
         cursor.execute(modelquery)
@@ -386,7 +406,14 @@ def receiveimage():
                         foundtxtfromkey = keybased(parameter, local_save_input_test_file, originaldilate, originalerode)
                         if (foundtxtfromkey == ""):
                             foundtxtfromkey == "-"
-                        finaltext.append(foundtxtfromkey)
+                        finaltext.append('"'+foundtxtfromkey+'"')
+
+                    elif parameter[1] == 0:
+                        foundtxtfromfullocr = fullocrbased(parameter, local_save_input_test_file, originalthreshold, originalcolorcut)
+                        if (foundtxtfromfullocr == ""):
+                            foundtxtfromfullocr == "-"
+                        finaltext.append('"'+foundtxtfromfullocr+'"')
+
                     else :
                         xaxis = int(parameter[1]) + leftindexfound
                         yaxis = int(parameter[2]) + headerfound
@@ -449,11 +476,11 @@ def receiveimage():
                             print(textfound)
                             if (textfound == ""):
                                 textfound == "-"
-                            finaltext.append(textfound)
+                            finaltext.append('"'+textfound+'"')
                         else:
                             if (textfound == ""):
                                 textfound == "-"
-                            finaltext.append(textfound)
+                            finaltext.append('"'+textfound+'"')
 
             return sendresponse(str(finaltext), 200)
 
@@ -480,12 +507,23 @@ def processcroppedimg():
             threshold = int(data['threshold'])
             colorcut = int(data['colorcut'])
             corrstring = img_data + "=="
-            corrstring1 = re.sub(r'.*,', ',', corrstring)
-            corrstring2 = corrstring1.replace(",", "")
+            # print(corrstring)
+            img = imread(io.BytesIO(base64.b64decode(corrstring)))
+            # corrstring1 = re.sub(r'.*,', ',', corrstring)
+            # corrstring2 = corrstring1.replace(",", "")
+            cv2_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(local_save_cropped_file, cv2_img)
 
-            stringToRGB(corrstring2, local_save_cropped_file)
-            final = enhancecroppedpic(threshold, colorcut)
-            return final
+            # stringToRGB(img, local_save_cropped_file)
+            # final = enhancecroppedpic(threshold, colorcut)
+            final = enhancecroppedpicruntime(threshold, colorcut, cv2_img)
+            final = np.array(final)
+            string = base64.b64encode(cv2.imencode('.jpg', final)[1]).decode()
+
+            message = {"status": 200, "imagestring": string, "updatedresultstring": getupdatedimgstring()}
+            response = jsonify(message)
+            response.status_code = 200
+            return response
 
         # image1 = Image.open(local_save_cropped_file)
         # image1.show()
@@ -509,6 +547,9 @@ def updatemodeledtails():
         defeyerangex = request.headers["defeyerangex"]
         defeyerangey = request.headers["defeyerangey"]
 
+        defdilate = request.headers["defdilate"]
+        deferode = request.headers["deferode"]
+
         conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
                               'Server=IN2371790W1\SQLEXPRESS;'
                               'Database=eyesight;'
@@ -519,7 +560,8 @@ def updatemodeledtails():
         #                                                       'defeyerangey, apiexposed, apikey, apiurl) VALUES (' + \
         #              ' \'' + modelname + '\' , \'' + ocrtype + '\'' + ',\'' + fullheight + '\',\'' + fullwidth + '\',\'' + noofparam + '\',\'' + header + '\',\'' + footer + '\',\'' + leftindex + '\',\'' + defthre + '\',\'' + defcolcut + '\',\'' + defeyerangex + '\',\'' + defeyerangey + '\',\'' + apiexposed + '\',\'' + apikey + '\',\'' + apiurl + '\'' + '); '
 
-        modelquery = 'UPDATE models SET apiexposed = ' + '\'' + apiexposed + '\'' + ', ' + 'defthre=' + ' \'' + defthre + '\'' + ', ' + 'defcolcut=' + ' \'' + defcolcut + '\'' + ', ' + 'defeyerangex=' + ' \'' + defeyerangex + '\'' + ', ' + 'defeyerangey=' + ' \'' + defeyerangey + '\'' + ' WHERE model = ' + '\'' + modelname + '\';'
+        # modelquery = 'UPDATE models SET apiexposed = ' + '\'' + apiexposed + '\'' + ', ' + 'defthre=' + ' \'' + defthre + '\'' + ', ' + 'defcolcut=' + ' \'' + defcolcut + '\'' + ', ' + 'defeyerangex=' + ' \'' + defeyerangex + '\'' + ', ' + 'defeyerangey=' + ' \'' + defeyerangey + '\'' + ' WHERE model = ' + '\'' + modelname + '\';'
+        modelquery = 'UPDATE models SET apiexposed = ' + '\'' + apiexposed + '\'' + ', ' + 'defthre=' + ' \'' + defthre + '\'' + ', ' + 'defcolcut=' + ' \'' + defcolcut + '\'' + ', ' + 'defeyerangex=' + ' \'' + defeyerangex + '\'' + ', ' + 'defeyerangey=' + ' \'' + defeyerangey + '\''+ ', ' + 'defdilate=' + ' \'' + defdilate + '\''+ ', ' + 'deferode=' + ' \'' + deferode + '\''+ ' WHERE model = ' + '\'' + modelname + '\';'
         print(modelquery)
         cursor.execute(modelquery)
         conn.commit()
@@ -584,7 +626,7 @@ def getupdatedimgstring():
     try:
         # croppedimage = imread(local_save_cropped_file)
         croppedimage = Image.open(local_save_cropped_file)
-        resultstring = tesserocr.image_to_text(croppedimage, lang="eng")  # print ocr text from image
+        resultstring = tesserocr.image_to_text(croppedimage, lang=language)  # print ocr text from image
         resultstring = resultstring.strip()
         if resultstring == "":
             resultstring = "Cannot extract text"
@@ -676,7 +718,7 @@ def cropimage(image, left, top, right, bottom):
 # call this method and pass cropped image to invoke tesseract engine and get text found in that image
 def invoketesseract(croppedimage):
     try:
-        resultstring = tesserocr.image_to_text(croppedimage, lang="eng")  # print ocr text from image
+        resultstring = tesserocr.image_to_text(croppedimage, lang=language)  # print ocr text from image
         resultstring = resultstring.strip()
         print(resultstring)
         return resultstring
@@ -891,6 +933,28 @@ def fetchexistingmodel():
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
     query = 'select * from eyesight.dbo.' + modelname + ';'
+    cursor.execute(query)
+    rows = []
+    for row in cursor:
+        rows.append(row)
+    rows = str(rows)
+    # rows.replace("(", "[")
+    # rows.replace(")", "]")
+    # response = json.dumps(rows)
+    print(rows)
+    return rows
+
+
+# call this method and pass model name to get the model metadata table in list of lists format
+@app.route('/fetchexistingmodelmetadata', methods = ['POST'])
+def fetchexistingmodelmetadata():
+    modelname = request.form['modelname']
+    conn = pyodbc.connect('Driver={ODBC Driver 17 for SQL Server};'
+                          'Server=IN2371790W1\SQLEXPRESS;'
+                          'Database=eyesight;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    query = 'select * from eyesight.dbo.models where model = ' + '\'' + modelname + '\'' + ';'
     cursor.execute(query)
     rows = []
     for row in cursor:
@@ -1423,10 +1487,12 @@ def initialimageprocess():
             dilate = int(data['dilate'])
             corrstring = img_data + "=="
 
+            # print (corrstring)
+
             timestamp = time.time()
             timestamp = str(timestamp).split('.')
             timestamp = str(timestamp[0])
-            print(timestamp)
+            # print(timestamp)
 
             # corrstring = re.sub(r'.*,', ',', corrstring)
             # corrstring = corrstring.replace(",", "")
@@ -1542,6 +1608,134 @@ def initialimageprocess():
         return sendresponse(resultstring, 201)
 
 
+# call this method for full image OCR
+@app.route('/fullocr', methods = ['POST'])
+def fullocr():
+    try:
+        data = request.get_json()
+        if data is None:
+            print("No valid request body, json missing!")
+            return jsonify({'error': 'No valid request body, json missing!'})
+        else:
+            img_data = data['thumbnail']
+            threshold = int(data['threshold'])
+            colorcut = int(data['colorcut'])
+            corrstring = img_data + "=="
+
+            # print (corrstring)
+
+            timestamp = time.time()
+            timestamp = str(timestamp).split('.')
+            timestamp = str(timestamp[0])
+            # print(timestamp)
+
+            # corrstring = re.sub(r'.*,', ',', corrstring)
+            # corrstring = corrstring.replace(",", "")
+
+            # stringToRGB(corrstring, local_save_cropped_file)
+            img = imread(io.BytesIO(base64.b64decode(corrstring)))
+            cv2_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            final = enhancecroppedpicruntime(threshold, colorcut, cv2_img)
+
+            # extracted_text = pytesseract.image_to_string(final, lang='eng', config='digits')
+            # extracted_text = pytesseract.image_to_string(final, lang='eng', config='--psm 11 --oem 3 -c tessedit_char_whitelist=0123456789QWERTYUIOPLKJHGFDSAZXCVBNMqwertyuioplkjhgfdsazxcvbnm~!@#$%^&*()_+=-{}|\][:;<>?/., ')
+            extracted_text = pytesseract.image_to_string(final, lang=language, config='--psm 1 --oem 3')
+            print(extracted_text)
+
+            extracted_text = extracted_text.replace('\n\n\n', '\n')
+            extracted_text = extracted_text.replace('\n\n', '\n')
+
+            return sendresponse(extracted_text, 200)
+
+        # image1 = Image.open(local_save_cropped_file)
+        # image1.show()
+        # resultstring = tesserocr.image_to_text(image1, lang="eng")  # print ocr text from image
+        # resultstring = resultstring.strip()
+        # print(resultstring)
+        # return sendresponse(resultstring, 200)
+    except Exception as e:
+        resultstring = 'failed to get text!!!' + str(e)
+        print(resultstring)
+        return sendresponse(resultstring, 201)
+
+
+def fullocrbased(parameter, local_save_input_test_file, originalthreshold, originalcolorcut):
+    regex = parameter[32]
+
+    if (regex == "-"):
+        inputimage = cv2.imread(local_save_input_test_file)
+        inputimage = Image.fromarray(inputimage)
+        processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+        # processedimage.save(local_save_input_test_file)
+        extracted_text = pytesseract.image_to_string(processedimage, lang=language, config='--psm 11')
+        extracted_text = extracted_text.replace('"', '')
+        extracted_text = extracted_text.replace('“', '')
+        extracted_text = extracted_text.replace('\\ ', 'n')
+        string = extracted_text.replace('   ', '')
+    else:
+        regex = regex.split("|")
+        print(regex)
+        inputimage = cv2.imread(local_save_input_test_file)
+        inputimage = Image.fromarray(inputimage)
+        processedimage = enhancecroppedpicruntime(originalthreshold, originalcolorcut, inputimage)
+        # processedimage.save(local_save_input_test_file)
+        extracted_text = pytesseract.image_to_string(processedimage, lang=language, config='--psm 11')
+        extracted_text = extracted_text.replace('"', '')
+        extracted_text = extracted_text.replace('“', '')
+        extracted_text = extracted_text.replace('\\ ', 'n')
+        extracted_text = extracted_text.replace('   ', '')
+        extracted_text = extracted_text.replace("\n", " ")
+
+        regexnature = regex[0]
+        regexnaturealphabets = regex[1]
+        textentered = regex[2]
+        textentered = textentered.replace("'", "")
+
+        if (regexnature == "4"):
+            string = []
+            words = extracted_text.split(" ")
+            for word in words:
+                print(word)
+                exactword = word
+                r = re.search('[a-zA-Z]', exactword)
+                print(r)
+                if (r != None):
+                    r2 = re.search(r'\d', exactword)
+                    if (r2 != None):
+                        if (regexnaturealphabets == "1"):
+                            if (len(exactword) >= int(textentered)):
+                                string.append(exactword)
+                        if (regexnaturealphabets == "3"):
+                            if (len(exactword) == int(textentered)):
+                                string.append(exactword)
+
+            print(string)
+
+        elif (regexnature == "2"):
+            string = []
+            words = extracted_text.split(" ")
+            for word in words:
+                print(word)
+                exactword = word
+                exactword = re.sub('[^0-9]','', exactword)
+                r = re.search(r'\d', exactword)
+                print(r)
+                if (r != None):
+                    if (regexnaturealphabets == "1"):
+                        if (len(exactword) >= int(textentered)):
+                            string.append(exactword)
+
+            print(string)
+
+
+    string = str(string)
+    string = string.replace("[", "")
+    string = string.replace("]", "")
+    string = string.replace("'", "")
+    return string
+
+
+
 def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
@@ -1551,6 +1745,8 @@ def sendresponse(message, statuscode):
     print("string - " + message)
     message1 = {"status": statuscode, "string": message}
     response = jsonify(message1)
+    print ("this is final ----")
+    print(str(response))
     response.status_code = statuscode
     return response
 
@@ -1669,7 +1865,7 @@ def gettextfromcroppedpic(local_save_input_test_file, modelname, textboxesl):
             rgb = im1.convert('RGB')
 
             try:
-                resultstring = tesserocr.image_to_text(rgb, lang="eng")  # print ocr text from image
+                resultstring = tesserocr.image_to_text(rgb, lang=language)  # print ocr text from image
                 resultstring = resultstring.strip()
                 print(label + "-" + resultstring)
                 result = label + "-" + resultstring
@@ -1699,113 +1895,6 @@ def fetchmodeldetails(model):
         for element in row:
             modelmetadata.append(element)
     return modelmetadata
-
-
-# def keybased(model, key_width, key_height, local_save_input_test_file):
-#     inputimage = cv2.imread(local_save_input_test_file)
-#     inputimage = Image.fromarray(inputimage)
-#     processedimage = enhancecroppedpicruntime("-", "-", inputimage)
-#     processedimage.save(local_save_input_test_file)
-#     txtboxx = []
-#     # for model in modelsmetadata:
-#     model = [x for x in model]
-#
-#     if model[23] == 'true':
-#         originaltextwidth = model[3]
-#         originaltextheight = model[4]
-#         originalimagesizewidth = model[8]
-#         originalimagesizeheight = model[9]
-#         keyval = model[26]
-#         kposition = model[24]
-#
-#         boxes = gettextboxes(local_save_input_test_file, originalimagesizewidth, originalimagesizeheight)
-#
-#         for [startX, startY, endX, endY] in boxes:
-#             cropped_image = cropimage(processedimage, startX, startY, startX + key_width,
-#                                       startY + key_height)
-#             result_text = invoketesseract(cropped_image)
-#             similarityratio = similar(keyval, result_text)
-#
-#             if similarityratio > 0.8:
-#                 txtbox = [startX, startY, endX, endY]
-#
-#                 if kposition == 'below':
-#                     sortedbox = boxes.sort(key=lambda a: a[1])
-#                     print ("sorted boxes:")
-#                     print (boxes)
-#                     print (sortedbox)
-#                     index = boxes.index(txtbox)
-#                     print (type(index))
-#
-#
-#                     value = sorted([boxes[i] if (boxes[i][1] == boxes[index + 1][1]) or (boxes[i][1] in range(boxes[index + 1][4] - 0.05 * originalimagesizeheight, boxes[index][4] + 0.05 * originalimagesizeheight)) else boxes[index + 1] for i in range(index + 2, len(boxes))], key=lambda x: x[0])
-#
-#                     yfiltered = boxes [(index + 1):(len(boxes))]
-#                     print (yfiltered)
-#
-#                     [startX, startY, endX, endY] = value[0]
-#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
-#                                               startY + originaltextheight)
-#                     result_text = invoketesseract(cropped_image)
-#                     # sendresponse(result_text, 200)
-#                     print(result_text)
-#                     return (result_text)
-#
-#                 elif kposition == 'above':
-#                     boxes.sort(key=lambda lis: lis[1])
-#                     index = boxes.index(txtbox)
-#                     value = sorted([boxes[i] if boxes[i][1] == boxes[index - 1][1] or boxes[i][1] in range(
-#                         boxes[index - 1][1] - 0.05 * originalimagesizeheight,
-#                         boxes[index][1] + 0.05 * originalimagesizeheight) else
-#                                     boxes[index - 1] for i in range(0, index)], key=lambda x: x[0])
-#                     [startX, startY, endX, endY] = value[0]
-#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
-#                                               startY + originaltextheight)
-#                     result_text = invoketesseract(cropped_image)
-#                     # sendresponse(result_text, 200)
-#                     print(result_text)
-#                     return (result_text)
-#
-#                 elif kposition == 'right':
-#                     boxes.sort(key=lambda lis: lis[0])
-#                     index = boxes.index(txtbox)
-#                     value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] + 0.05 * originalimagesizewidth,
-#                                                                      boxes[index][3] + 0.05 * originalimagesizewidth) or
-#                                                 boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
-#                                                                      boxes[index][
-#                                                                          1] + 0.05 * originalimagesizeheight) else
-#                                     boxes[index + 1] for i in range(index + 1, len(boxes))], key=lambda x: x[0])
-#                     [startX, startY, endX, endY] = value[0]
-#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
-#                                               startY + originaltextheight)
-#                     result_text = invoketesseract(cropped_image)
-#                     # sendresponse(result_text, 200)
-#                     print(result_text)
-#                     return (result_text)
-#
-#                 elif kposition == 'left':
-#                     boxes.sort(key=lambda lis: lis[0])
-#                     index = boxes.index(txtbox)
-#                     value = sorted([boxes[i] if boxes[i][0] in range(boxes[index][0] - 0.05 * originalimagesizewidth,
-#                                                                      boxes[index][3] - 0.05 * originalimagesizewidth) or
-#                                                 boxes[i][1] in range(boxes[index][1] - 0.05 * originalimagesizeheight,
-#                                                                      boxes[index][
-#                                                                          1] + 0.05 * originalimagesizeheight) else
-#                                     boxes[index - 1] for i in range(0, index)], key=lambda x: x[0])
-#                     [startX, startY, endX, endY] = value[0]
-#                     cropped_image = cropimage(processedimage, startX, startY, startX + originaltextwidth,
-#                                               startY + originaltextheight)
-#                     result_text = invoketesseract(cropped_image)
-#                     # sendresponse(result_text, 200)
-#                     print(result_text)
-#                     return (result_text)
-#
-#                 else:
-#                     sendresponse("cannot find value for this key", 201)
-#             else:
-#                 sendresponse("cannot find value for this key", 201)
-#     else:
-#         print("No key for this parameter")
 
 
 def keybased(model, local_save_input_test_file, originaldilate, originalerode):
@@ -1958,7 +2047,7 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 # cropped_image.show()
 
                 # result_text = invoketesseract(cropped_image)
-                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                result_text = pytesseract.image_to_string(cropped_image, lang=language)
                 # sendresponse(result_text, 200)
                 print(result_text)
                 # return (result_text)
@@ -1975,6 +2064,26 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 boxesabovekey = boxes[0:(index)]
                 print("boxes above key - " + str(boxesabovekey))
 
+                samelinefiltered = []
+
+                ypercentage = 2
+                yvision = originalimagesizeheight / 100
+                yvision = yvision * ypercentage
+                print("vision - " + str(yvision))
+
+                for textbox in boxesabovekey:
+                    txtyaxis = int(textbox[1])
+                    diff = abs(txtyaxis - keyyaxis)
+                    if (diff > yvision):
+                        samelinefiltered.append(textbox)
+
+                print("y-aligned boxes - " + str(samelinefiltered))
+
+                if (len(samelinefiltered) == 0):
+                    result_text = "-"
+                    break
+
+
 
                 # writing new logic
                 koriperyboxes = []
@@ -1982,13 +2091,16 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 vision = originalimagesizeheight / 100
                 vision = vision * percentage
                 print("vision for koriperyboxes - " + str(vision))
-                for textbox in boxesabovekey:
+                for textbox in samelinefiltered:
                     starty = int(textbox[1])
                     diff = abs(starty - keyyaxis)
                     if (diff <= vision):
                         koriperyboxes.append(textbox)
                 print("key orientation Y boxes - " + str(koriperyboxes))
 
+                if (len(koriperyboxes) == 0):
+                    result_text = "-"
+                    break
 
 
 
@@ -2004,7 +2116,9 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                         koriperxboxes.append(textbox)
                 print("key orientation X boxes - " + str(koriperxboxes))
 
-
+                if (len(koriperxboxes) == 0):
+                    result_text = "-"
+                    break
 
 
 
@@ -2031,153 +2145,13 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
                 cropped_image.show()
 
-                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                result_text = pytesseract.image_to_string(cropped_image, lang=language)
                 # sendresponse(result_text, 200)
                 print("output - " + result_text)
-                # return (result_text)
+                if (result_text == ""):
+                    result_text = "-"
+                break
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                # yfiltered = []
-                #
-                # ypercentage = 2
-                # yvision = originalimagesizeheight / 100
-                # yvision = yvision * ypercentage
-                # print("vision - " + str(yvision))
-                #
-                # for textbox in boxesabovekey:
-                #     txtyaxis = int(textbox[1])
-                #     diff = abs(txtyaxis - keyyaxis)
-                #     if (diff > yvision):
-                #         yfiltered.append(textbox)
-                #
-                # print("y-aligned boxes - " + str(yfiltered))
-                #
-                # # get all the boxes that are aligned to x axis of the key box
-                # xalignedboxes = []
-                #
-                # percentage = float(koriper)
-                # vision = originalimagesizewidth / 100
-                # vision = vision * percentage
-                # print("vision - " + str(vision))
-                #
-                # for textbox in yfiltered:
-                #     startx = int(textbox[0])
-                #     diff = abs(startx - keyxaxis)
-                #
-                #     if (diff <= vision):
-                #         xalignedboxes.append(textbox)
-                # print("x-aligned boxes - " + str(xalignedboxes))
-                #
-                # xalignedboxes2 = []
-                #
-                # for textbox in xalignedboxes:
-                #     startx1 = int(textbox[0])
-                #     if (kori == "left"):
-                #         if (startx1 < keyxaxis):
-                #             xalignedboxes2.append(textbox)
-                #     if (kori == "right"):
-                #         if (startx1 > keyxaxis):
-                #             xalignedboxes2.append(textbox)
-                #     if (kori == "immediate"):
-                #         xalignedboxes2.append(textbox)
-                #     if (kori == "auto"):
-                #         xalignedboxes2.append(textbox)
-                #
-                #
-                # if (kori == "auto"):
-                #
-                #     # sort the x aligned boxed in ascending oreder of y axis
-                #     xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
-                #     print(xalignedboxes2)
-                #
-                #     # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
-                #     if (len(xalignedboxes2) > 2):
-                #         xalignedboxes2 = xalignedboxes2[:3]
-                #
-                #     xdifferences = []
-                #     for boxes in xalignedboxes2:
-                #         xvalue = boxes[0]
-                #         diff = abs(xvalue - keyxaxis)
-                #         xdifferences.append(diff)
-                #
-                #     finalindex = xdifferences.index(min(xdifferences))
-                #     finalboxesy = xalignedboxes2[finalindex]
-                #
-                #     txtStartX = finalboxesy[0]
-                #     txtStartY = finalboxesy[1]
-                #
-                #     cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
-                #     # cropped_image.show()
-                #
-                #     # result_text = invoketesseract(cropped_image)
-                #     result_text = pytesseract.image_to_string(cropped_image, lang='eng')
-                #     # sendresponse(result_text, 200)
-                #     print(result_text)
-                #     return (result_text)
-                #
-                #
-                # else:
-                #     # sort the x aligned boxed in ascending oreder of y axis
-                #     xalignedboxes2.sort(key=lambda y: y[1], reverse=True)
-                #     print(xalignedboxes2)
-                #
-                #     # take first 3 boxes from x aligned boxes sorted in ascending order of y axis
-                #     if (len(xalignedboxes2) > 2):
-                #         xalignedboxes2 = xalignedboxes2[:3]
-                #
-                #
-                #     ydifferences = []
-                #     for boxes in xalignedboxes2:
-                #         yvalue = boxes[1]
-                #         diff = abs(yvalue - keyyaxis)
-                #         ydifferences.append(diff)
-                #
-                #     finalindex = ydifferences.index(min(ydifferences))
-                #
-                #     finalboxes = xalignedboxes2[finalindex]
-                #
-                #     # sort again based on x axis
-                #     # xalignedboxes2.sort(key=lambda y: y[0])
-                #     # print(xalignedboxes2)
-                #
-                #     txtStartX = finalboxes[0]
-                #     txtStartY = finalboxes[1]
-                #
-                #     cropped_image = cropimage(processedimage, txtStartX, txtStartY, txtStartX + originaltextwidth, txtStartY + originaltextheight)
-                #     # cropped_image.show()
-                #
-                #     # result_text = invoketesseract(cropped_image)
-                #     result_text = pytesseract.image_to_string(cropped_image, lang='eng')
-                #     # sendresponse(result_text, 200)
-                #     print(result_text)
-                #     return (result_text)
 
             elif kposition == 'right':
                 boxes.sort(key=lambda a: a[0])
@@ -2188,31 +2162,33 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 print(index)
 
                 # getting boxes to the right of key value box
-                boxesabovekey = boxes[(index + 1):(len(boxes))]
-                print("boxes to the right of key - " + str(boxesabovekey))
+                boxestotherightofkey = boxes[(index + 1):(len(boxes))]
+                print("boxes to the right of key - " + str(boxestotherightofkey))
 
                 keyrighttip = float(keyxaxis) + float(key_width)
 
-                boxestotherightofkey = []
+                absoluteboxestotherightofkey = []
 
-                for box in boxesabovekey:
+                for box in boxestotherightofkey:
                     if (box[0] > keyrighttip):
-                        boxestotherightofkey.append(box)
+                        absoluteboxestotherightofkey.append(box)
 
-                xfiltered = []
+                print (absoluteboxestotherightofkey)
 
-                xpercentage = 2
-                xvision = originalimagesizewidth / 100
-                xvision = xvision * xpercentage
-                print("vision - " + str(xvision))
-
-                for textbox in boxestotherightofkey:
-                    txtxaxis = int(textbox[0])
-                    diff = abs(txtxaxis - keyxaxis)
-                    if (diff > xvision):
-                        xfiltered.append(textbox)
-
-                print("x-aligned boxes - " + str(xfiltered))
+                # xfiltered = []
+                #
+                # xpercentage = 2
+                # xvision = originalimagesizewidth / 100
+                # xvision = xvision * xpercentage
+                # print("vision - " + str(xvision))
+                #
+                # for textbox in absoluteboxestotherightofkey:
+                #     txtxaxis = int(textbox[0])
+                #     diff = abs(txtxaxis - keyxaxis)
+                #     if (diff > xvision):
+                #         xfiltered.append(textbox)
+                #
+                # print("x-aligned boxes - " + str(xfiltered))
 
                 # get all the boxes that are aligned to x axis of the key box
                 xalignedboxes = []
@@ -2222,7 +2198,7 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 vision = vision * percentage
                 print("vision - " + str(vision))
 
-                for textbox in xfiltered:
+                for textbox in absoluteboxestotherightofkey:
                     starty = int(textbox[1])
                     diff = abs(starty - int(keyyaxis))
 
@@ -2264,7 +2240,7 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
 
 
                 # sort the x aligned boxed in ascending oreder of y axis
-                xalignedboxes2.sort(key=lambda y: y[1])
+                xalignedboxes2.sort(key=lambda y: y[0])
                 print(xalignedboxes2)
 
 
@@ -2280,8 +2256,8 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
 
                 ydifferences = []
                 for boxes in xalignedboxes2:
-                    yvalue = boxes[1]
-                    diff = abs(yvalue - keyyaxis)
+                    xvalue = boxes[0]
+                    diff = abs(xvalue - keyxaxis)
                     ydifferences.append(diff)
 
                 finalindex = ydifferences.index(min(ydifferences))
@@ -2354,7 +2330,7 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 # cropped_image.show()
 
                 # result_text = invoketesseract(cropped_image)
-                result_text = pytesseract.image_to_string(cropped_image, lang='eng')
+                result_text = pytesseract.image_to_string(cropped_image, lang=language, config='--psm 11')
                 # sendresponse(result_text, 200)
                 print(result_text)
                 if (result_text == ""):
@@ -2382,7 +2358,7 @@ def keybased(model, local_save_input_test_file, originaldilate, originalerode):
                 return "Value position missing"
                 # sendresponse("Value position is missing", 201)
         else:
-            print("Key value is missing - " + keyval)
+            print("Searching for the key - " + keyval)
             # sendresponse("cannot find value for this key", 201)
 
     return result_text
@@ -2396,7 +2372,7 @@ def removelines(local_save_input_test_file):
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
         # Remove horizontal lines
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 1))
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 2))
         remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
         cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2404,7 +2380,7 @@ def removelines(local_save_input_test_file):
             cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
 
         # Remove vertical lines
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 80))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 80))
         remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
         cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2430,7 +2406,7 @@ def removelines2(local_save_input_initial_file):
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
         # Remove horizontal lines
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 1))
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 2))
         remove_horizontal = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
         cnts = cv2.findContours(remove_horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2438,7 +2414,7 @@ def removelines2(local_save_input_initial_file):
             cv2.drawContours(result, [c], -1, (255, 255, 255), 5)
 
         # Remove vertical lines
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 80))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 80))
         remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
         cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -2455,6 +2431,105 @@ def removelines2(local_save_input_initial_file):
     except Exception as e:
         return "failed"
 
+
+
+# pdf logics
+# call this method for initial saving pdf
+@app.route('/receiveinitialpdf', methods = ['POST'])
+def receiveinitialpdf():
+    try:
+        file = request.files['file']
+        if 'file' not in request.files:
+            print('No file part')
+            return sendresponse("file not received", 201)
+        else:
+            timestamp = time.time()
+            timestamp = str(timestamp).split('.')
+            timestamp = str(timestamp[0])
+            print(timestamp)
+
+            local_save_input_initial_pdf = 'initialpdf' + timestamp + '.pdf'
+
+            file = request.files['file']
+            file.save(local_save_input_initial_pdf)
+            print("file received")
+            return local_save_input_initial_pdf
+    except Exception as e:
+        print ("no file found")
+        return sendresponse("failed", 200)
+
+
+# call this method for table extraction from pdf
+@app.route('/processpdf', methods = ['POST'])
+def processpdf():
+    try:
+        filename = request.form['filename']
+        pages = request.form['pages']
+        flavor = request.form['flavor']
+        processbglines = request.form['processbglines']
+        cuttext = request.form['cuttext']
+        superscripts = request.form['superscripts']
+        smalllines = request.form['smalllines']
+
+        pd.set_option('display.max_colwidth', -1)
+
+        foldername = filename[:filename.index(".")]
+        path = 'C:/Users/ET437GL/Documents/ASpace/updated/model_v1/model_v1/Image-Border/ImageBorder/eyesightpdfvision/' + foldername
+        os.mkdir(path)
+
+        pages = convert_from_path(filename, 500)
+
+        i=1
+
+        for page in pages:
+            page.save( path + '/' + str(i) + '.jpg', 'JPEG')
+            i = i+1
+
+        if (flavor == "lattice"):
+            table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=pages, process_background=processbglines, split_text=cuttext, flag_size=superscripts)
+            # camelot.plot(table_list, kind='text').show()
+        elif (flavor == "stream"):
+            table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=pages, split_text=cuttext, flag_size=superscripts)
+
+        nooftables = len(table_list)
+
+        fullhtml = "<h1>Table 1</h1>"
+
+        for x in range(nooftables):
+
+            # plot = camelot.plot(table_list[x], kind='text').show()
+            # f = plt.gcf()
+            # size = f.get_size_inches()
+            # f.set_size_inches(size[0] * 4, size[1] * 4, forward=True)
+            # plot = camelot.plot(table_list[x], kind='text').show()
+
+            # foldername = filename[:filename.index(".")]
+            #
+            # path = 'C:/Users/ET437GL/Documents/ASpace/updated/model_v1/model_v1/Image-Border/ImageBorder/eyesightpdfvision/' + foldername
+            # os.mkdir(path)
+            # plot.savefig(path + "/" + str(x) + ".png")
+
+            df = table_list[x].df
+            if (x == 0):
+                html = df.to_html()
+                fullhtml += html
+            else:
+                tabletitle = "<h1>Table " + str(x-1) + "</h1>"
+                # tabletitle = "<h1>Extracted Table</h1>"
+                fullhtml += tabletitle
+                html = df.to_html()
+                fullhtml += html
+
+        print(fullhtml)
+
+        # return render_template('simple.html',  tables=[df.to_html(classes='data')], titles=df.columns.values)
+        with open('outputtables/' + filename + '.html', 'w', encoding='utf-8') as file:
+            file.write(fullhtml)
+
+        return fullhtml
+    except Exception as e:
+        print ("no file found" + str(e))
+        return "failed"
 
 
 @app.errorhandler(400)
