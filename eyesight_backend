@@ -1,3 +1,5 @@
+import shutil
+
 from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 import pytesseract
@@ -20,6 +22,9 @@ import camelot
 import matplotlib.pyplot as plt
 import pandas as pd
 from pdf2image import convert_from_path
+from pathlib import Path
+from typing import Union
+from camelot import utils
 
 
 app = Flask(__name__)
@@ -2462,14 +2467,37 @@ def receiveinitialpdf():
 # call this method for table extraction from pdf
 @app.route('/processpdf', methods = ['POST'])
 def processpdf():
+
     try:
         filename = request.form['filename']
-        pages = request.form['pages']
+        inputpages = request.form['pages']
         flavor = request.form['flavor']
         processbglines = request.form['processbglines']
         cuttext = request.form['cuttext']
         superscripts = request.form['superscripts']
         smalllines = request.form['smalllines']
+        tableposition = request.form['tableposition']
+
+        tablepositionlist = []
+        tablepositionlist.append(tableposition)
+
+        layout, dim = utils.get_page_layout(filename)
+        print (layout.width)
+        print (layout.height)
+        dim = (int(layout.width), int(layout.height))
+
+
+        #delete file if already present
+        try:
+            deletepath = "eyesightpdfvision/" + filename[:filename.index(".")]
+            deletepath2 = "outputtables/" + filename + ".html"
+            # os.rmdir(deletepath)
+            os.remove(deletepath2)
+            del_dir(deletepath)
+            # del_dir()
+
+        except Exception as e:
+            print("no folder found - " + str(e))
 
         pd.set_option('display.max_colwidth', -1)
 
@@ -2477,19 +2505,34 @@ def processpdf():
         path = 'C:/Users/ET437GL/Documents/ASpace/updated/model_v1/model_v1/Image-Border/ImageBorder/eyesightpdfvision/' + foldername
         os.mkdir(path)
 
-        pages = convert_from_path(filename, 500)
+        pages = convert_from_path(filename, 200)
 
         i=1
 
         for page in pages:
-            page.save( path + '/' + str(i) + '.jpg', 'JPEG')
+            imgpath = path + '/' + str(i) + '.jpg'
+
+            page.save(imgpath, 'JPEG')
+            img = cv2.imread(imgpath, cv2.IMREAD_UNCHANGED)
+            resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+            print('Resized Dimensions : ', resized.shape)
+            cv2.imwrite(imgpath,resized)
+
             i = i+1
 
         if (flavor == "lattice"):
-            table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=pages, process_background=processbglines, split_text=cuttext, flag_size=superscripts)
+            if (tableposition == "['-,-,-,-']"):
+                table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=inputpages, process_background=processbglines, split_text=cuttext, flag_size=superscripts)
+
+            else:
+                table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=inputpages, process_background=processbglines, split_text=cuttext, flag_size=superscripts, table_areas=tablepositionlist)
             # camelot.plot(table_list, kind='text').show()
         elif (flavor == "stream"):
-            table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=pages, split_text=cuttext, flag_size=superscripts)
+            if (tableposition == "['-,-,-,-']"):
+                table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=inputpages, split_text=cuttext, flag_size=superscripts)
+            else:
+                table_list = camelot.read_pdf(filename, flavor=flavor, strip=' \n', pages=inputpages, split_text=cuttext, flag_size=superscripts, table_areas=tablepositionlist)
+
 
         nooftables = len(table_list)
 
@@ -2497,7 +2540,7 @@ def processpdf():
 
         for x in range(nooftables):
 
-            # plot = camelot.plot(table_list[x], kind='text').show()
+            # camelot.plot(table_list[x], kind='text').show()
             # f = plt.gcf()
             # size = f.get_size_inches()
             # f.set_size_inches(size[0] * 4, size[1] * 4, forward=True)
@@ -2505,9 +2548,9 @@ def processpdf():
 
             # foldername = filename[:filename.index(".")]
             #
-            # path = 'C:/Users/ET437GL/Documents/ASpace/updated/model_v1/model_v1/Image-Border/ImageBorder/eyesightpdfvision/' + foldername
-            # os.mkdir(path)
-            # plot.savefig(path + "/" + str(x) + ".png")
+            # pathtest = 'C:/Users/ET437GL/Documents/ASpace/updated/model_v1/model_v1/Image-Border/ImageBorder/eyesightpdfvision/test' + foldername
+            # os.mkdir(pathtest)
+            # plot.savefig(pathtest + "/" + str(x) + ".png")
 
             df = table_list[x].df
             if (x == 0):
@@ -2530,6 +2573,22 @@ def processpdf():
     except Exception as e:
         print ("no file found" + str(e))
         return "failed"
+
+
+def del_dir(target: Union[Path, str], only_if_empty: bool = False):
+    target = Path(target).expanduser()
+    assert target.is_dir()
+    for p in sorted(target.glob('**/*'), reverse=True):
+        if not p.exists():
+            continue
+        p.chmod(0o666)
+        if p.is_dir():
+            p.rmdir()
+        else:
+            if only_if_empty:
+                raise RuntimeError(f'{p.parent} is not empty!')
+            p.unlink()
+    target.rmdir()
 
 
 @app.errorhandler(400)
