@@ -1,7 +1,7 @@
 matplotlib
 dill===0.2.8
 numpy===1.15.4
-joblib===0.13.0
+joblib===1.2.0
 flask
 flask-restful
 pandas===0.23.4
