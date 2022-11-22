@@ -8,4 +8,4 @@ pandas===0.23.4
 scikit-learn===0.20.2
 Flask-Cors
 requests
-pillow===2.2.2
+pillow===9.3.0
